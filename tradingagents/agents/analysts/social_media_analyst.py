@@ -3,6 +3,7 @@ import time
 import json
 from tradingagents.agents.utils.agent_utils import get_news
 from tradingagents.dataflows.config import get_config
+from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
 
 def create_social_media_analyst(llm):
@@ -10,6 +11,13 @@ def create_social_media_analyst(llm):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
+
+        # Trim messages to prevent context overflow
+        messages = trim_messages_for_model(
+            state["messages"],
+            model_name="claude-sonnet",
+            custom_limit=80000
+        )
 
         tools = [
             get_news,
@@ -44,7 +52,7 @@ def create_social_media_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke(state["messages"])
+        result = chain.invoke({"messages": messages})
 
         report = ""
 

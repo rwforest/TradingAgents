@@ -20,6 +20,8 @@ from tradingagents.agents.utils.agent_states import (
     InvestDebateState,
     RiskDebateState,
 )
+from tradingagents.agents.utils.rate_limiter import get_rate_limiter
+from tradingagents.agents.utils.rate_limited_llm import wrap_with_rate_limiting
 from tradingagents.dataflows.config import set_config
 
 # Import the new abstract tool methods from agent_utils
@@ -51,6 +53,7 @@ class TradingAgentsGraph:
         selected_analysts=["market", "social", "news", "fundamentals"],
         debug=False,
         config: Dict[str, Any] = None,
+        enable_rate_limiting: bool = False,
     ):
         """Initialize the trading agents graph and components.
 
@@ -58,9 +61,17 @@ class TradingAgentsGraph:
             selected_analysts: List of analyst types to include
             debug: Whether to run in debug mode
             config: Configuration dictionary. If None, uses default config
+            enable_rate_limiting: Whether to enable rate limiting (default: False - disabled due to compatibility issues)
         """
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
+        self.enable_rate_limiting = enable_rate_limiting
+
+        # Initialize rate limiter
+        if self.enable_rate_limiting:
+            self.rate_limiter = get_rate_limiter()
+            if self.debug:
+                print("[Rate Limiter] Enabled for Databricks API calls")
 
         # Update the interface's config
         set_config(self.config)
@@ -72,7 +83,36 @@ class TradingAgentsGraph:
         )
 
         # Initialize LLMs
-        if self.config["llm_provider"].lower() == "openai" or self.config["llm_provider"] == "ollama" or self.config["llm_provider"] == "openrouter":
+        if self.config["llm_provider"] == "databricks":
+            base_url = self.config["databricks_base_url"]
+            if base_url and not base_url.endswith("/serving-endpoints"):
+                base_url = base_url.rstrip("/") + "/serving-endpoints"
+
+            deep_llm = ChatOpenAI(
+                model=self.config["deep_think_llm"],
+                api_key=self.config["databricks_token"],
+                base_url=base_url,
+            )
+            quick_llm = ChatOpenAI(
+                model=self.config["quick_think_llm"],
+                api_key=self.config["databricks_token"],
+                base_url=base_url,
+            )
+
+            # Wrap with rate limiting
+            self.deep_thinking_llm = wrap_with_rate_limiting(
+                deep_llm,
+                self.config["deep_think_llm"],
+                enable=self.enable_rate_limiting,
+                verbose=self.debug
+            )
+            self.quick_thinking_llm = wrap_with_rate_limiting(
+                quick_llm,
+                self.config["quick_think_llm"],
+                enable=self.enable_rate_limiting,
+                verbose=self.debug
+            )
+        elif self.config["llm_provider"].lower() == "openai" or self.config["llm_provider"] == "ollama" or self.config["llm_provider"] == "openrouter":
             self.deep_thinking_llm = ChatOpenAI(model=self.config["deep_think_llm"], base_url=self.config["backend_url"])
             self.quick_thinking_llm = ChatOpenAI(model=self.config["quick_think_llm"], base_url=self.config["backend_url"])
         elif self.config["llm_provider"].lower() == "anthropic":

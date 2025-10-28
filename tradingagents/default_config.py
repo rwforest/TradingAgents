@@ -9,10 +9,12 @@ DEFAULT_CONFIG = {
         "dataflows/data_cache",
     ),
     # LLM settings
-    "llm_provider": "openai",
-    "deep_think_llm": "o4-mini",
-    "quick_think_llm": "gpt-4o-mini",
+    "llm_provider": os.getenv("LLM_PROVIDER", "openai"), # "openai" or "databricks"
+    "deep_think_llm": os.getenv("DEEP_THINK_LLM", "o4-mini"),
+    "quick_think_llm": os.getenv("QUICK_THINK_LLM", "gpt-4o-mini"),
     "backend_url": "https://api.openai.com/v1",
+    "databricks_base_url": os.getenv("DATABRICKS_BASE_URL"),
+    "databricks_token": os.getenv("DATABRICKS_TOKEN"),
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

@@ -4,7 +4,16 @@ from .config import get_config
 
 def get_stock_news_openai(query, start_date, end_date):
     config = get_config()
-    client = OpenAI(base_url=config["backend_url"])
+    if config["llm_provider"] == "databricks":
+        base_url = config["databricks_base_url"]
+        if base_url and not base_url.endswith("/serving-endpoints"):
+            base_url = base_url.rstrip("/") + "/serving-endpoints"
+        client = OpenAI(
+            api_key=config["databricks_token"],
+            base_url=base_url,
+        )
+    else: # openai
+        client = OpenAI(base_url=config["backend_url"])
 
     response = client.responses.create(
         model=config["quick_think_llm"],
@@ -39,7 +48,16 @@ def get_stock_news_openai(query, start_date, end_date):
 
 def get_global_news_openai(curr_date, look_back_days=7, limit=5):
     config = get_config()
-    client = OpenAI(base_url=config["backend_url"])
+    if config["llm_provider"] == "databricks":
+        base_url = config["databricks_base_url"]
+        if base_url and not base_url.endswith("/serving-endpoints"):
+            base_url = base_url.rstrip("/") + "/serving-endpoints"
+        client = OpenAI(
+            api_key=config["databricks_token"],
+            base_url=base_url,
+        )
+    else: # openai
+        client = OpenAI(base_url=config["backend_url"])
 
     response = client.responses.create(
         model=config["quick_think_llm"],
@@ -74,7 +92,16 @@ def get_global_news_openai(curr_date, look_back_days=7, limit=5):
 
 def get_fundamentals_openai(ticker, curr_date):
     config = get_config()
-    client = OpenAI(base_url=config["backend_url"])
+    if config["llm_provider"] == "databricks":
+        base_url = config["databricks_base_url"]
+        if base_url and not base_url.endswith("/serving-endpoints"):
+            base_url = base_url.rstrip("/") + "/serving-endpoints"
+        client = OpenAI(
+            api_key=config["databricks_token"],
+            base_url=base_url,
+        )
+    else: # openai
+        client = OpenAI(base_url=config["backend_url"])
 
     response = client.responses.create(
         model=config["quick_think_llm"],

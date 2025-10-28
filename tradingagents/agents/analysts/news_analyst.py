@@ -3,12 +3,20 @@ import time
 import json
 from tradingagents.agents.utils.agent_utils import get_news, get_global_news
 from tradingagents.dataflows.config import get_config
+from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
 
 def create_news_analyst(llm):
     def news_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
+
+        # Trim messages to prevent context overflow
+        messages = trim_messages_for_model(
+            state["messages"],
+            model_name="claude-sonnet",
+            custom_limit=80000
+        )
 
         tools = [
             get_news,
@@ -43,7 +51,7 @@ def create_news_analyst(llm):
         prompt = prompt.partial(ticker=ticker)
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        result = chain.invoke({"messages": messages})
 
         report = ""
 

@@ -3,6 +3,7 @@ import time
 import json
 from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions
 from tradingagents.dataflows.config import get_config
+from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
 
 def create_fundamentals_analyst(llm):
@@ -10,6 +11,14 @@ def create_fundamentals_analyst(llm):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
+
+        # Trim messages to prevent context overflow
+        # Keep token count under 80K (leaves room for tool outputs and response)
+        messages = trim_messages_for_model(
+            state["messages"],
+            model_name="claude-sonnet",  # Adjust based on your model
+            custom_limit=80000  # Conservative limit
+        )
 
         tools = [
             get_fundamentals,
@@ -48,7 +57,7 @@ def create_fundamentals_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke(state["messages"])
+        result = chain.invoke({"messages": messages})  # Use trimmed messages
 
         report = ""
 
