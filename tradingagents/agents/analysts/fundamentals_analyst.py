@@ -1,11 +1,10 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 import time
 import json
 from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions
 from tradingagents.dataflows.config import get_config
-from tradingagents.agents.utils.context_limiter import trim_messages_for_model
-from tradingagents.agents.utils.summarizer import summarize_analyst_report
+from tradingagents.agents.utils.summarizer import summarize_analyst_report, safe_invoke_with_retry
 
 
 def create_fundamentals_analyst(llm):
@@ -14,12 +13,19 @@ def create_fundamentals_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Trim messages to prevent context overflow (preserve last 10 for tool call pairs)
-        messages = trim_messages_for_model(
-            state["messages"],
-            model_name="claude-sonnet",
-            summarize=True
-        )
+        # Filter messages to only keep valid tool call/response pairs
+        # This prevents "tool message without tool_calls" errors
+        messages = []
+        raw_messages = state["messages"]
+
+        for i, msg in enumerate(raw_messages):
+            # If it's a tool message, check if previous message has tool_calls
+            if isinstance(msg, ToolMessage):
+                if i > 0 and hasattr(raw_messages[i-1], 'tool_calls') and raw_messages[i-1].tool_calls:
+                    messages.append(msg)
+                # else: skip orphaned tool message
+            else:
+                messages.append(msg)
 
         tools = [
             get_fundamentals,
@@ -58,7 +64,9 @@ def create_fundamentals_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke(messages)  # Use trimmed messages
+        # Use safe invoke with automatic retry on context overflow
+        config = get_config()
+        result = safe_invoke_with_retry(chain, messages, max_retries=3, llm_config=config)
 
         report = ""
 

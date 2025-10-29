@@ -4,7 +4,6 @@ Context limiter to prevent token overflow in TradingAgents
 from typing import List
 import tiktoken
 from langchain_core.messages import SystemMessage
-from tradingagents.dataflows.config import get_llm
 
 def estimate_tokens(text: str, model: str = "gpt-4") -> int:
     """

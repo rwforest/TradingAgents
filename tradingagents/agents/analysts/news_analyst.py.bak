@@ -11,15 +11,8 @@ def create_news_analyst(llm):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
 
-        # Filter messages to keep only valid tool call/response pairs
-        messages = []
-        raw_messages = state["messages"]
-        for i, msg in enumerate(raw_messages):
-            if isinstance(msg, ToolMessage):
-                if i > 0 and hasattr(raw_messages[i-1], 'tool_calls') and raw_messages[i-1].tool_calls:
-                    messages.append(msg)
-            else:
-                messages.append(msg)
+        # Use messages directly - progressive summarization happens after report generation
+        messages = state["messages"]
 
         tools = [
             get_news,

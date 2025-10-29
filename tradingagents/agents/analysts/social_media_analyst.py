@@ -1,9 +1,9 @@
+from langchain_core.messages import ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 from tradingagents.agents.utils.agent_utils import get_news
 from tradingagents.dataflows.config import get_config
-from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
 
 def create_social_media_analyst(llm):
@@ -12,12 +12,15 @@ def create_social_media_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Trim messages to prevent context overflow (preserve last 10 for tool call pairs)
-        messages = trim_messages_for_model(
-            state["messages"],
-            model_name="claude-sonnet",
-            custom_limit=60000
-        )
+        # Filter messages to keep only valid tool call/response pairs
+        messages = []
+        raw_messages = state["messages"]
+        for i, msg in enumerate(raw_messages):
+            if isinstance(msg, ToolMessage):
+                if i > 0 and hasattr(raw_messages[i-1], 'tool_calls') and raw_messages[i-1].tool_calls:
+                    messages.append(msg)
+            else:
+                messages.append(msg)
 
         tools = [
             get_news,
