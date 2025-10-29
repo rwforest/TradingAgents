@@ -4,6 +4,7 @@ import time
 import json
 from tradingagents.agents.utils.agent_utils import get_news, get_global_news
 from tradingagents.dataflows.config import get_config
+from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
 
 def create_news_analyst(llm):
@@ -11,15 +12,12 @@ def create_news_analyst(llm):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
 
-        # Filter messages to keep only valid tool call/response pairs
-        messages = []
-        raw_messages = state["messages"]
-        for i, msg in enumerate(raw_messages):
-            if isinstance(msg, ToolMessage):
-                if i > 0 and hasattr(raw_messages[i-1], 'tool_calls') and raw_messages[i-1].tool_calls:
-                    messages.append(msg)
-            else:
-                messages.append(msg)
+        # Trim messages to prevent context overflow
+        messages = trim_messages_for_model(
+            state["messages"],
+            model_name="claude-sonnet",
+            summarize=True
+        )
 
         tools = [
             get_news,
@@ -54,7 +52,7 @@ def create_news_analyst(llm):
         prompt = prompt.partial(ticker=ticker)
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(messages)
 
         report = ""
 
