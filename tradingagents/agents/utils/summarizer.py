@@ -168,10 +168,16 @@ def check_and_summarize_messages(
         msg = messages[i]
         if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
             tool_call_set = [msg]
+            # Get valid tool_call_ids from this AIMessage
+            valid_ids = {tc.id if hasattr(tc, 'id') else tc['id'] for tc in msg.tool_calls}
             j = i + 1
-            while j < len(messages) and isinstance(messages[j], ToolMessage) and messages[j].tool_call_id in [tc['id'] for tc in msg.tool_calls]:
-                tool_call_set.append(messages[j])
-                j += 1
+            # Collect all ToolMessages that belong to this AIMessage
+            while j < len(messages) and isinstance(messages[j], ToolMessage):
+                if hasattr(messages[j], 'tool_call_id') and messages[j].tool_call_id in valid_ids:
+                    tool_call_set.append(messages[j])
+                    j += 1
+                else:
+                    break  # Stop if we hit a ToolMessage for a different AIMessage
             message_sets.append(tool_call_set)
             i = j
         else:

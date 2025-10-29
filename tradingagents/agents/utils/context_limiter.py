@@ -76,18 +76,21 @@ def trim_messages_to_token_limit(
 ) -> List:
     """
     Trim messages to stay under a token limit, with optional summarization.
+    Preserves AIMessage + ToolMessage groups to maintain tool call integrity.
 
     Args:
         messages: List of messages to trim
         max_tokens: Maximum number of tokens to keep (default: 100K)
         preserve_first: Always keep the first message (typically the initial query)
-        preserve_last: Number of most recent messages to always keep
+        preserve_last: Number of most recent message groups to always keep
         summarize: Whether to summarize dropped messages
         model_name: Model to use for summarization
 
     Returns:
         Trimmed list of messages
     """
+    from langchain_core.messages import AIMessage, ToolMessage
+
     if not messages:
         return messages
 
@@ -96,10 +99,44 @@ def trim_messages_to_token_limit(
     if current_tokens <= max_tokens:
         return messages
 
-    # Identify messages to keep vs. drop
-    first_message = [messages[0]] if preserve_first and messages else []
-    last_messages = messages[-preserve_last:] if preserve_last > 0 else []
-    middle_messages = messages[len(first_message):-len(last_messages) if last_messages else len(messages)]
+    # Group messages to preserve AIMessage + ToolMessage pairs
+    message_groups = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if isinstance(msg, AIMessage) and hasattr(msg, 'tool_calls') and msg.tool_calls:
+            # Group AIMessage with its ToolMessages
+            group = [msg]
+            valid_ids = {tc.id if hasattr(tc, 'id') else tc['id'] for tc in msg.tool_calls}
+            j = i + 1
+            while j < len(messages) and isinstance(messages[j], ToolMessage):
+                if hasattr(messages[j], 'tool_call_id') and messages[j].tool_call_id in valid_ids:
+                    group.append(messages[j])
+                    j += 1
+                else:
+                    break
+            message_groups.append(group)
+            i = j
+        else:
+            message_groups.append([msg])
+            i += 1
+
+    # Identify groups to keep vs. drop
+    first_group = [message_groups[0]] if preserve_first and message_groups else []
+    last_groups = message_groups[-preserve_last:] if preserve_last > 0 and len(message_groups) >= preserve_last else message_groups
+
+    # Calculate middle groups
+    num_first = len(first_group)
+    num_last = len(last_groups)
+    if num_first > 0 and message_groups[-num_last:] == last_groups:
+        middle_groups = message_groups[num_first:-num_last] if num_last > 0 else message_groups[num_first:]
+    else:
+        middle_groups = []
+
+    # Flatten groups back to messages
+    first_messages = [msg for group in first_group for msg in group]
+    last_messages = [msg for group in last_groups for msg in group]
+    middle_messages = [msg for group in middle_groups for msg in group]
 
     # Summarize dropped messages if requested
     summary_message = []
@@ -107,33 +144,31 @@ def trim_messages_to_token_limit(
         summary_text = _summarize_messages(middle_messages, model_name)
         summary_message = [SystemMessage(content=f"[Summary of dropped messages]:\n{summary_text}")]
 
-    # Assemble the trimmed list and re-calculate tokens
-    trimmed_messages = first_message + summary_message + last_messages
-    
-    # Final trim if summary + preserved messages are still too long
-    final_trimmed = []
-    tokens_used = 0
-    
-    # Add first message
-    if first_message:
-        final_trimmed.append(first_message[0])
-        tokens_used += estimate_message_tokens(first_message)
-        
-    # Add summary
-    if summary_message:
-        final_trimmed.extend(summary_message)
-        tokens_used += estimate_message_tokens(summary_message)
+    # Assemble the trimmed list
+    trimmed_messages = first_messages + summary_message + last_messages
 
-    # Add last messages until token limit is reached
-    for msg in reversed(last_messages):
-        msg_tokens = estimate_message_tokens([msg])
-        if tokens_used + msg_tokens <= max_tokens:
-            final_trimmed.insert(len(first_message) + len(summary_message), msg)
-            tokens_used += msg_tokens
-        else:
-            break
+    # Check if still over limit - trim from the end if needed
+    trimmed_tokens = estimate_message_tokens(trimmed_messages)
+    if trimmed_tokens > max_tokens:
+        # Keep first + summary, trim last messages
+        final_trimmed = first_messages + summary_message
+        tokens_used = estimate_message_tokens(final_trimmed)
 
-    return final_trimmed
+        # Add last message groups until limit
+        for group in reversed(last_groups):
+            group_tokens = estimate_message_tokens(group)
+            if tokens_used + group_tokens <= max_tokens:
+                # Insert group before summary
+                insert_pos = len(first_messages)
+                for msg in group:
+                    final_trimmed.insert(insert_pos, msg)
+                    insert_pos += 1
+                tokens_used += group_tokens
+            else:
+                break
+        return final_trimmed
+
+    return trimmed_messages
 
 def get_safe_token_limit(model_name: str) -> int:
     """
