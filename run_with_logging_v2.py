@@ -137,17 +137,95 @@ try:
                     if len(url) < 200:
                         urls.add(url)
 
+        # Helper function to extract recommendation from report
+        def extract_recommendation(report_text):
+            import re
+            if not report_text or report_text == 'N/A':
+                return 'N/A'
+            # Look for common recommendation patterns (most specific first)
+            patterns = [
+                r'FINAL RECOMMENDATION:\s*\*\*([A-Z]+(?:\s*\([^)]+\))?)\*\*',  # Matches "BUY (Modified Conservative Approach)"
+                r'FINAL RECOMMENDATION:\s*([A-Z]+(?:\s*\([^)]+\))?)',
+                r'FINAL TRANSACTION PROPOSAL:\s*\*\*([A-Z]+)\*\*',
+                r'RECOMMENDATION:\s*\*\*([A-Z]+)\*\*',
+                r'Decision:\s*\*\*([A-Z]+)\*\*',
+                r'\*\*([A-Z]+)\*\*\s*(?:recommendation|decision)',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, report_text, re.IGNORECASE)
+                if match:
+                    rec = match.group(1).strip()
+                    # Clean up - extract just the action if there's a parenthetical
+                    if '(' in rec:
+                        main_action = rec.split('(')[0].strip()
+                        return main_action.upper()
+                    return rec.upper()
+            return 'See Analysis'
+
+        # Extract recommendations from each report
+        market_rec = extract_recommendation(final_state.get('market_report', ''))
+        fundamentals_rec = extract_recommendation(final_state.get('fundamentals_report', ''))
+        news_rec = extract_recommendation(final_state.get('news_report', ''))
+        social_rec = extract_recommendation(final_state.get('social_media_report', final_state.get('sentiment_report', '')))
+
+        # Extract intermediate decisions
+        investment_judge = extract_recommendation(final_state.get('investment_debate_state', {}).get('judge_decision', ''))
+        trader_plan = extract_recommendation(final_state.get('trader_investment_plan', ''))
+
+        # Extract final decision - handle complex formats
+        final_decision_text = final_state.get('final_trade_decision', decision)
+        final_dec = extract_recommendation(final_decision_text)
+        if final_dec == 'See Analysis':
+            # Fallback: try to get from the decision variable
+            final_dec = decision.replace('FINAL TRANSACTION PROPOSAL: ', '').replace('**', '').strip()
+            # If still complex, extract first word that's BUY/SELL/HOLD
+            import re
+            match = re.search(r'\b(BUY|SELL|HOLD)\b', final_dec.upper())
+            if match:
+                final_dec = match.group(1)
+
         # Markdown
         print("✓ Writing markdown...")
         with open(md_file, 'w') as f:
             f.write(f"# Trading Analysis: {symbol}\n\n**Date:** {trade_date}\n**Provider:** {config['llm_provider']}\n\n")
             if chart_ok:
-                f.write(f"![Chart](./{chart_file.name})\n\n---\n\n")
+                f.write(f"![Chart](./{chart_file.name})\n\n")
+
+            # Summary table with recommendations and links
+            f.write("## Executive Summary\n\n")
+            f.write("### Analyst Recommendations\n")
+            f.write("| Analysis Section | Recommendation | Details |\n")
+            f.write("|-----------------|----------------|----------|\n")
+            f.write(f"| Market Analysis | {market_rec} | [View Analysis](#market-analysis) |\n")
+            f.write(f"| Fundamental Analysis | {fundamentals_rec} | [View Analysis](#fundamental-analysis) |\n")
+            f.write(f"| News Analysis | {news_rec} | [View Analysis](#news-analysis) |\n")
+            f.write(f"| Social Media Sentiment | {social_rec} | [View Analysis](#social-media-sentiment) |\n")
+
+            # Intermediate decisions
+            f.write("\n### Decision Pipeline\n")
+            f.write("| Decision Stage | Recommendation | Details |\n")
+            f.write("|----------------|----------------|----------|\n")
+            f.write(f"| Investment Research (Bull/Bear Debate) | {investment_judge} | [View Debate](#investment-debate) |\n")
+            f.write(f"| Trader Analysis | {trader_plan} | [View Plan](#trader-analysis) |\n")
+            f.write(f"| **Final Risk-Adjusted Decision** | **{final_dec}** | [View Decision](#final-trading-decision) |\n")
+            f.write("\n---\n\n")
+
             f.write(f"## Market Analysis\n{final_state.get('market_report', 'N/A')}\n\n---\n\n")
             f.write(f"## Fundamental Analysis\n{final_state.get('fundamentals_report', 'N/A')}\n\n---\n\n")
             f.write(f"## News Analysis\n{final_state.get('news_report', 'N/A')}\n\n---\n\n")
             f.write(f"## Social Media Sentiment\n{final_state.get('social_media_report', final_state.get('sentiment_report', 'N/A'))}\n\n---\n\n")
-            f.write(f"## Final Trading Decision\n**{final_state.get('final_trade_decision', decision)}**\n\n")
+
+            # Add intermediate decision sections
+            f.write(f"## Investment Debate\n")
+            f.write(f"### Research Manager Decision\n{final_state.get('investment_debate_state', {}).get('judge_decision', 'N/A')}\n\n")
+            f.write(f"<details>\n<summary>View Bull/Bear Debate History</summary>\n\n")
+            f.write(f"**Bull Arguments:**\n{final_state.get('investment_debate_state', {}).get('bull_history', 'N/A')}\n\n")
+            f.write(f"**Bear Arguments:**\n{final_state.get('investment_debate_state', {}).get('bear_history', 'N/A')}\n\n")
+            f.write(f"</details>\n\n---\n\n")
+
+            f.write(f"## Trader Analysis\n{final_state.get('trader_investment_plan', 'N/A')}\n\n---\n\n")
+
+            f.write(f"## Final Trading Decision\n{final_state.get('final_trade_decision', decision)}\n\n")
 
             # Add sources section at the end
             if urls:
