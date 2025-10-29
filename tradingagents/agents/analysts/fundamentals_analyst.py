@@ -1,9 +1,11 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import AIMessage
 import time
 import json
 from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.context_limiter import trim_messages_for_model
+from tradingagents.agents.utils.summarizer import summarize_analyst_report
 
 
 def create_fundamentals_analyst(llm):
@@ -12,12 +14,11 @@ def create_fundamentals_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Trim messages to prevent context overflow
-        # Keep token count under 80K (leaves room for tool outputs and response)
+        # Trim messages to prevent context overflow (preserve last 10 for tool call pairs)
         messages = trim_messages_for_model(
             state["messages"],
-            model_name="claude-sonnet",  # Adjust based on your model
-            custom_limit=80000  # Conservative limit
+            model_name="claude-sonnet",
+            summarize=True
         )
 
         tools = [
@@ -57,12 +58,25 @@ def create_fundamentals_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke({"messages": messages})  # Use trimmed messages
+        result = chain.invoke(messages)  # Use trimmed messages
 
         report = ""
 
         if len(result.tool_calls) == 0:
             report = result.content
+
+            # Summarize if report is too long (>5000 chars)
+            if len(report) > 5000:
+                print(f"[Fundamentals Analyst] Report is {len(report)} chars, summarizing...")
+                config = get_config()
+                summarized_report = summarize_analyst_report(
+                    analyst_name="Fundamentals Analyst",
+                    full_report=report,
+                    max_summary_length=2000,
+                    llm_config=config
+                )
+                # Replace the result content with summarized version
+                result = AIMessage(content=summarized_report)
 
         return {
             "messages": [result],

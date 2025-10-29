@@ -61,7 +61,7 @@ class TradingAgentsGraph:
             selected_analysts: List of analyst types to include
             debug: Whether to run in debug mode
             config: Configuration dictionary. If None, uses default config
-            enable_rate_limiting: Whether to enable rate limiting (default: False - disabled due to compatibility issues)
+            enable_rate_limiting: Whether to enable rate limiting (default: False - RateLimitedLLM wrapper breaks LangChain Runnable compatibility)
         """
         self.debug = debug
         self.config = config or DEFAULT_CONFIG

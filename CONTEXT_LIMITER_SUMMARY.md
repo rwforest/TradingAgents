@@ -6,14 +6,15 @@ Added intelligent token-aware context limiting to prevent the **"Input length ex
 
 ### Files Created/Modified:
 
-1. **NEW:** `tradingagents/agents/utils/context_limiter.py`
+1. **MODIFIED:** `tradingagents/agents/utils/context_limiter.py`
+   - Now supports summarizing dropped messages to retain context.
    - Token estimation using tiktoken
    - Smart message trimming
    - Model-aware limits
 
 2. **MODIFIED:** `tradingagents/agents/analysts/fundamentals_analyst.py`
-   - Now trims messages to 80K tokens before processing
-   - Preserves first and last messages
+   - Now trims messages with summarization enabled.
+   - Preserves first and last messages, and a summary of the middle.
    - Logs trimming activity
 
 ## How It Works
@@ -29,15 +30,15 @@ News Analyst → 80K tokens
 Fundamentals Analyst → 169K tokens ❌ OVERFLOW!
 ```
 
-### After (✅ Stays under limit):
+### After (✅ Stays under limit with summarization):
 ```
 Market Analyst → 30K tokens
   ↓ passes all messages
 Social Analyst → 50K tokens
   ↓ passes all messages
 News Analyst → 80K tokens
-  ↓ TRIMS to 36K tokens ✂️
-Fundamentals Analyst → 36K + new data = ~60K ✅ SAFE!
+  ↓ TRIMS & SUMMARIZES to ~40K tokens ✂️
+Fundamentals Analyst → ~40K + new data = ~65K ✅ SAFE!
 ```
 
 ## Configuration
@@ -48,38 +49,37 @@ The limiter is configured in `fundamentals_analyst.py`:
 messages = trim_messages_for_model(
     state["messages"],
     model_name="claude-sonnet",
-    custom_limit=80000  # 80K tokens (60% of 131K limit)
+    summarize=True
 )
 ```
 
-### Adjusting the Limit:
+### Adjusting the Behavior:
 
-**More Aggressive (Safer):**
+**Disable Summarization:**
 ```python
-custom_limit=60000  # 60K - very safe, less context
-```
-
-**Less Aggressive (Riskier):**
-```python
-custom_limit=100000  # 100K - more context, closer to limit
-```
-
-**Model-Specific:**
-```python
-# Let it auto-detect based on model (80% of model's limit)
 messages = trim_messages_for_model(
     state["messages"],
-    model_name="databricks-claude-sonnet-4-5"
-    # custom_limit omitted - uses auto-detection
+    model_name="claude-sonnet",
+    summarize=False
+)
+```
+
+**Custom Token Limit (with summarization):**
+```python
+messages = trim_messages_for_model(
+    state["messages"],
+    model_name="claude-sonnet",
+    summarize=True,
+    custom_limit=80000
 )
 ```
 
 ## What Gets Preserved
 
-The trimmer always keeps:
-1. **First message** - The initial query ("Analyze NVDA")
-2. **Last message** - Most recent analyst output
-3. **Most recent middle messages** - As many as fit in the budget
+The trimmer now preserves context by:
+1.  **Keeping the First Message:** The initial query ("Analyze NVDA") is always kept.
+2.  **Summarizing the Middle:** Instead of dropping messages from the middle, they are summarized into a concise paragraph.
+3.  **Keeping the Last Messages:** The most recent analyst outputs and tool calls are preserved.
 
 ## Testing
 
@@ -139,6 +139,7 @@ def create_social_media_analyst(llm):
         messages = trim_messages_for_model(
             state["messages"],
             model_name="claude-sonnet",
+            summarize=True,
             custom_limit=70000  # Even more conservative
         )
 
@@ -150,15 +151,16 @@ def create_social_media_analyst(llm):
 
 ✅ **Prevents overflow errors**
 ✅ **Allows using all 4 analysts**
+✅ **Retains context from dropped messages through summarization**
 ✅ **Automatic and transparent**
 ✅ **Configurable per-analyst**
-✅ **Preserves most important context**
 ✅ **Logs trimming activity**
 
 ## Limitations
 
-⚠️ **Loss of middle context** - Messages in the middle may be dropped
-⚠️ **Not perfect** - Token estimation is approximate
+⚠️ **Summarization is not perfect:** Some details may be lost in the summary.
+⚠️ **Increased Latency and Cost:** Summarization adds an extra LLM call.
+⚠️ **Token estimation is approximate**
 ⚠️ **Model-specific** - Different models have different limits
 
 ## Troubleshooting
@@ -184,4 +186,4 @@ def create_social_media_analyst(llm):
 
 ## Summary
 
-The context limiter intelligently trims conversation history to stay under token limits while preserving the most important context. You can now run all 4 analysts without hitting the 131K token limit!
+The context limiter intelligently trims conversation history to stay under token limits. By summarizing dropped messages, it preserves the most important context, allowing you to run all 4 analysts without hitting token limits.

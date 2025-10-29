@@ -3,7 +3,8 @@ Context limiter to prevent token overflow in TradingAgents
 """
 from typing import List
 import tiktoken
-
+from langchain_core.messages import SystemMessage
+from tradingagents.dataflows.config import get_llm
 
 def estimate_tokens(text: str, model: str = "gpt-4") -> int:
     """
@@ -23,7 +24,6 @@ def estimate_tokens(text: str, model: str = "gpt-4") -> int:
         encoding = tiktoken.get_encoding("cl100k_base")
 
     return len(encoding.encode(text))
-
 
 def estimate_message_tokens(messages: List) -> int:
     """
@@ -51,21 +51,40 @@ def estimate_message_tokens(messages: List) -> int:
 
     return total_tokens
 
+def _summarize_messages(messages: List, model_name: str) -> str:
+    """
+    Summarize a list of messages using a quick model.
+    """
+    if not messages:
+        return ""
+
+    llm = get_llm(model_name)
+    
+    prompt = "Summarize the following conversation. Condense the key information, decisions, and data points into a concise paragraph. The summary will be used as context for a follow-up conversation, so it should be self-contained and easy to understand."
+    
+    summary_prompt = f"{prompt}\n\n---\n\n" + "\n".join([str(m.content) if hasattr(m, 'content') else str(m) for m in messages])
+
+    response = llm.invoke(summary_prompt)
+    return response.content
 
 def trim_messages_to_token_limit(
     messages: List,
     max_tokens: int = 100000,
     preserve_first: bool = True,
-    preserve_last: int = 10
+    preserve_last: int = 10,
+    summarize: bool = False,
+    model_name: str = "claude-sonnet"
 ) -> List:
     """
-    Trim messages to stay under a token limit.
+    Trim messages to stay under a token limit, with optional summarization.
 
     Args:
         messages: List of messages to trim
         max_tokens: Maximum number of tokens to keep (default: 100K)
         preserve_first: Always keep the first message (typically the initial query)
-        preserve_last: Number of most recent messages to always keep (default: 10 to preserve tool call pairs)
+        preserve_last: Number of most recent messages to always keep
+        summarize: Whether to summarize dropped messages
+        model_name: Model to use for summarization
 
     Returns:
         Trimmed list of messages
@@ -73,53 +92,49 @@ def trim_messages_to_token_limit(
     if not messages:
         return messages
 
-    # Calculate current token count
     current_tokens = estimate_message_tokens(messages)
 
-    # If under limit, return as-is
     if current_tokens <= max_tokens:
         return messages
 
-    # Build trimmed message list
-    trimmed = []
-
-    # Always preserve first message if requested
-    if preserve_first and len(messages) > 0:
-        trimmed.append(messages[0])
-
-    # Calculate available tokens
-    tokens_used = estimate_message_tokens(trimmed)
-    available_tokens = max_tokens - tokens_used
-
-    # Reserve tokens for last N messages
+    # Identify messages to keep vs. drop
+    first_message = [messages[0]] if preserve_first and messages else []
     last_messages = messages[-preserve_last:] if preserve_last > 0 else []
-    last_tokens = estimate_message_tokens(last_messages)
-    available_tokens -= last_tokens
+    middle_messages = messages[len(first_message):-len(last_messages) if last_messages else len(messages)]
 
-    # Add middle messages while staying under budget
-    middle_start = 1 if preserve_first else 0
-    middle_end = len(messages) - preserve_last if preserve_last > 0 else len(messages)
+    # Summarize dropped messages if requested
+    summary_message = []
+    if summarize and middle_messages:
+        summary_text = _summarize_messages(middle_messages, model_name)
+        summary_message = [SystemMessage(content=f"[Summary of dropped messages]:\n{summary_text}")]
 
-    for i in range(middle_end - 1, middle_start - 1, -1):  # Add most recent first
-        msg = messages[i]
-        msg_tokens = estimate_tokens(str(msg[1]) if isinstance(msg, tuple) else str(msg.content))
+    # Assemble the trimmed list and re-calculate tokens
+    trimmed_messages = first_message + summary_message + last_messages
+    
+    # Final trim if summary + preserved messages are still too long
+    final_trimmed = []
+    tokens_used = 0
+    
+    # Add first message
+    if first_message:
+        final_trimmed.append(first_message[0])
+        tokens_used += estimate_message_tokens(first_message)
+        
+    # Add summary
+    if summary_message:
+        final_trimmed.extend(summary_message)
+        tokens_used += estimate_message_tokens(summary_message)
 
-        if tokens_used + msg_tokens <= available_tokens:
-            trimmed.insert(1 if preserve_first else 0, msg)  # Insert after first or at start
+    # Add last messages until token limit is reached
+    for msg in reversed(last_messages):
+        msg_tokens = estimate_message_tokens([msg])
+        if tokens_used + msg_tokens <= max_tokens:
+            final_trimmed.insert(len(first_message) + len(summary_message), msg)
             tokens_used += msg_tokens
         else:
             break
 
-    # Add preserved last messages
-    trimmed.extend(last_messages)
-
-    # Optionally log the trimming (commented out to reduce output noise)
-    # final_tokens = estimate_message_tokens(trimmed)
-    # print(f"[Context Limiter] Trimmed {len(messages)} → {len(trimmed)} messages")
-    # print(f"[Context Limiter] Tokens: {current_tokens:,} → {final_tokens:,} (limit: {max_tokens:,})")
-
-    return trimmed
-
+    return final_trimmed
 
 def get_safe_token_limit(model_name: str) -> int:
     """
@@ -161,11 +176,11 @@ def get_safe_token_limit(model_name: str) -> int:
 
     return safe_limit
 
-
 def trim_messages_for_model(
     messages: List,
     model_name: str,
-    custom_limit: int = None
+    custom_limit: int = None,
+    summarize: bool = False
 ) -> List:
     """
     Trim messages based on model capabilities.
@@ -174,6 +189,7 @@ def trim_messages_for_model(
         messages: List of messages to trim
         model_name: Name of the model (to determine context limit)
         custom_limit: Optional custom token limit (overrides model default)
+        summarize: Whether to summarize dropped messages
 
     Returns:
         Trimmed messages
@@ -187,5 +203,7 @@ def trim_messages_for_model(
         messages,
         max_tokens=max_tokens,
         preserve_first=True,
-        preserve_last=1
+        preserve_last=15,  # Preserve more messages to avoid breaking tool call pairs
+        summarize=summarize,
+        model_name=model_name
     )

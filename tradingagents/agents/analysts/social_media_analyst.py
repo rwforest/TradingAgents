@@ -12,11 +12,11 @@ def create_social_media_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Trim messages to prevent context overflow
+        # Trim messages to prevent context overflow (preserve last 10 for tool call pairs)
         messages = trim_messages_for_model(
             state["messages"],
             model_name="claude-sonnet",
-            custom_limit=80000
+            custom_limit=60000
         )
 
         tools = [
@@ -52,7 +52,7 @@ def create_social_media_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke({"messages": messages})
+        result = chain.invoke(state["messages"])
 
         report = ""
 

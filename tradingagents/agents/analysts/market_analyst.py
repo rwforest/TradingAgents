@@ -1,9 +1,11 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import AIMessage
 import time
 import json
 from tradingagents.agents.utils.agent_utils import get_stock_data, get_indicators
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.context_limiter import trim_messages_for_model
+from tradingagents.agents.utils.summarizer import summarize_analyst_report
 
 
 def create_market_analyst(llm):
@@ -13,11 +15,11 @@ def create_market_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Trim messages to prevent context overflow
+        # Trim messages to prevent context overflow (preserve last 10 for tool call pairs)
         messages = trim_messages_for_model(
             state["messages"],
             model_name="claude-sonnet",
-            custom_limit=80000
+            custom_limit=60000
         )
 
         tools = [
@@ -78,13 +80,26 @@ Volume-Based Indicators:
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke({"messages": messages})
+        result = chain.invoke(state["messages"])
 
         report = ""
 
         if len(result.tool_calls) == 0:
             report = result.content
-       
+
+            # Summarize if report is too long (>5000 chars)
+            if len(report) > 5000:
+                print(f"[Market Analyst] Report is {len(report)} chars, summarizing...")
+                config = get_config()
+                summarized_report = summarize_analyst_report(
+                    analyst_name="Market Analyst",
+                    full_report=report,
+                    max_summary_length=2000,
+                    llm_config=config
+                )
+                # Replace the result content with summarized version
+                result = AIMessage(content=summarized_report)
+
         return {
             "messages": [result],
             "market_report": report,

@@ -11,11 +11,11 @@ def create_news_analyst(llm):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
 
-        # Trim messages to prevent context overflow
+        # Trim messages to prevent context overflow (preserve last 10 for tool call pairs)
         messages = trim_messages_for_model(
             state["messages"],
             model_name="claude-sonnet",
-            custom_limit=80000
+            custom_limit=60000
         )
 
         tools = [
@@ -51,7 +51,7 @@ def create_news_analyst(llm):
         prompt = prompt.partial(ticker=ticker)
 
         chain = prompt | llm.bind_tools(tools)
-        result = chain.invoke({"messages": messages})
+        result = chain.invoke(state["messages"])
 
         report = ""
 
