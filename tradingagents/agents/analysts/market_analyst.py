@@ -2,7 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
 import time
 import json
-from tradingagents.agents.utils.agent_utils import get_stock_data, get_indicators
+from tradingagents.agents.utils.agent_utils import get_stock_data, get_indicators, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.summarizer import summarize_analyst_report
 
@@ -14,15 +14,9 @@ def create_market_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Filter messages to keep only valid tool call/response pairs
-        messages = []
-        raw_messages = state["messages"]
-        for i, msg in enumerate(raw_messages):
-            if isinstance(msg, ToolMessage):
-                if i > 0 and hasattr(raw_messages[i-1], 'tool_calls') and raw_messages[i-1].tool_calls:
-                    messages.append(msg)
-            else:
-                messages.append(msg)
+        # Ensure messages properly alternate between user and assistant roles
+        # This prevents "Chat message input roles must alternate" errors
+        messages = ensure_message_alternation(state["messages"])
 
         tools = [
             get_stock_data,

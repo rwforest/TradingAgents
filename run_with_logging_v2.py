@@ -64,7 +64,7 @@ orig_stdout, orig_stderr = sys.stdout, sys.stderr
 sys.stdout = sys.stderr = QuietOutput(orig_stdout, log_handle)
 
 try:
-    symbols = ["TSLA"]
+    symbols = ["MSFT", "NVDA", "META", "GOOGL", "INTC", "TSLA"]
     trade_date = datetime.today().strftime('%Y-%m-%d')
     
     config = DEFAULT_CONFIG.copy()

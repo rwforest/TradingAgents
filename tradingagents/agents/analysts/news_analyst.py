@@ -2,7 +2,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
-from tradingagents.agents.utils.agent_utils import get_news, get_global_news
+from tradingagents.agents.utils.agent_utils import get_news, get_global_news, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
@@ -12,12 +12,16 @@ def create_news_analyst(llm):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
 
-        # Trim messages to prevent context overflow
+        # First trim messages to prevent context overflow
         messages = trim_messages_for_model(
             state["messages"],
             model_name="claude-sonnet",
             summarize=True
         )
+
+        # Then ensure messages properly alternate between user and assistant roles
+        # This prevents "Chat message input roles must alternate" errors
+        messages = ensure_message_alternation(messages)
 
         tools = [
             get_news,

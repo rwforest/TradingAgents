@@ -2,7 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
 import time
 import json
-from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions
+from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.summarizer import summarize_analyst_report, safe_invoke_with_retry
 
@@ -13,19 +13,9 @@ def create_fundamentals_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Filter messages to only keep valid tool call/response pairs
-        # This prevents "tool message without tool_calls" errors
-        messages = []
-        raw_messages = state["messages"]
-
-        for i, msg in enumerate(raw_messages):
-            # If it's a tool message, check if previous message has tool_calls
-            if isinstance(msg, ToolMessage):
-                if i > 0 and hasattr(raw_messages[i-1], 'tool_calls') and raw_messages[i-1].tool_calls:
-                    messages.append(msg)
-                # else: skip orphaned tool message
-            else:
-                messages.append(msg)
+        # Ensure messages properly alternate between user and assistant roles
+        # This prevents "Chat message input roles must alternate" errors
+        messages = ensure_message_alternation(state["messages"])
 
         tools = [
             get_fundamentals,
