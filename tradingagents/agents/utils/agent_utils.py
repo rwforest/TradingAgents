@@ -27,8 +27,9 @@ def ensure_message_alternation(messages):
 
     This function:
     1. Filters out orphaned ToolMessages (without preceding AIMessage with tool_calls)
-    2. Removes consecutive messages of the same role (keeps the last one)
+    2. Removes consecutive messages of the same role (keeps the last one WITH its ToolMessages)
     3. Ensures proper user->assistant->user->assistant flow
+    4. Maintains tool_call_id integrity
 
     Args:
         messages: List of messages (can be tuples, dict, or Message objects)
@@ -39,55 +40,80 @@ def ensure_message_alternation(messages):
     if not messages:
         return messages
 
-    filtered = []
+    # First pass: group messages with their tool responses
+    # Format: [(role, [msg, toolmsg1, toolmsg2, ...]), ...]
+    grouped = []
+    current_group = []
+    current_role = None
+
+    for msg in messages:
+        # Handle ToolMessages - attach to previous group
+        if isinstance(msg, ToolMessage):
+            if current_group:
+                current_group.append(msg)
+            continue
+
+        # Determine role
+        if isinstance(msg, tuple):
+            role = "user" if msg[0] in ["human", "user"] else "assistant" if msg[0] == "system" else msg[0]
+        elif isinstance(msg, dict):
+            role = "user" if msg.get("role") in ["human", "user"] else msg.get("role", "assistant")
+        elif isinstance(msg, HumanMessage):
+            role = "user"
+        elif isinstance(msg, AIMessage):
+            role = "assistant"
+        elif isinstance(msg, SystemMessage):
+            role = "system"
+        else:
+            role = "assistant"
+
+        # Start new group
+        if current_group:
+            grouped.append((current_role, current_group))
+        current_group = [msg]
+        current_role = role
+
+    # Add last group
+    if current_group:
+        grouped.append((current_role, current_group))
+
+    # Second pass: filter out consecutive same-role groups, keeping the last one
+    filtered_groups = []
     last_role = None
 
-    for i, msg in enumerate(messages):
-        # Handle ToolMessages specially
-        if isinstance(msg, ToolMessage):
-            # Check if the last message in filtered list has tool_calls
-            if filtered:
-                last_msg = filtered[-1]
-                if isinstance(last_msg, AIMessage) and hasattr(last_msg, 'tool_calls') and last_msg.tool_calls:
-                    # Valid tool message, append it (doesn't count toward alternation)
-                    filtered.append(msg)
-            # Skip orphaned ToolMessages
+    for role, group in grouped:
+        # System messages at start don't count
+        if role == "system" and (not filtered_groups or last_role is None):
+            filtered_groups.append((role, group))
             continue
 
-        # Determine the role of the current message
-        if isinstance(msg, tuple):
-            current_role = "user" if msg[0] in ["human", "user"] else "assistant" if msg[0] == "system" else msg[0]
-        elif isinstance(msg, dict):
-            current_role = "user" if msg.get("role") in ["human", "user"] else msg.get("role", "assistant")
-        elif isinstance(msg, HumanMessage):
-            current_role = "user"
-        elif isinstance(msg, AIMessage):
-            current_role = "assistant"
-        elif isinstance(msg, SystemMessage):
-            current_role = "system"
+        # If same role as last, replace the last group
+        if role == last_role and role != "system":
+            if filtered_groups:
+                filtered_groups[-1] = (role, group)
         else:
-            current_role = "assistant"
+            filtered_groups.append((role, group))
+            last_role = role
 
-        # System messages can appear at the start, don't count toward alternation
-        if current_role == "system":
-            if not filtered or last_role is None:
-                filtered.append(msg)
-            continue
+    # Third pass: validate tool messages and flatten back to list
+    result = []
+    for role, group in filtered_groups:
+        # Add the main message
+        main_msg = group[0]
+        result.append(main_msg)
 
-        # Skip consecutive messages of the same role (except system)
-        if current_role == last_role:
-            # Replace the last message with the current one (keep the most recent)
-            if filtered and last_role is not None:
-                # Find the last message with this role (skip over ToolMessages)
-                for j in range(len(filtered) - 1, -1, -1):
-                    if not isinstance(filtered[j], ToolMessage):
-                        filtered[j] = msg
-                        break
-        else:
-            filtered.append(msg)
-            last_role = current_role
+        # Add tool messages only if main message has tool_calls
+        if len(group) > 1:
+            if isinstance(main_msg, AIMessage) and hasattr(main_msg, 'tool_calls') and main_msg.tool_calls:
+                # Get valid tool_call_ids
+                valid_ids = {tc['id'] if isinstance(tc, dict) else tc.id for tc in main_msg.tool_calls}
+                # Only add ToolMessages with matching tool_call_ids
+                for tool_msg in group[1:]:
+                    if isinstance(tool_msg, ToolMessage):
+                        if hasattr(tool_msg, 'tool_call_id') and tool_msg.tool_call_id in valid_ids:
+                            result.append(tool_msg)
 
-    return filtered
+    return result
 
 
 def create_msg_delete():
