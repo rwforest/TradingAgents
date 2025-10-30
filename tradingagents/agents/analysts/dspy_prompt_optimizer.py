@@ -1,41 +1,62 @@
 import dspy
 from pydantic import BaseModel
-from dsp.utils.utils import dotdict
+from dspy.dsp.utils.utils import dotdict
+from dspy.adapters.types.tool import Tool
+import os
 
-def pydantic_to_dspy_signature(pydantic_model: BaseModel, docstring: str) -> dspy.Signature:
-    """Converts a Pydantic model to a dspy.Signature."""
-    inputs = {}
-    if pydantic_model:
-        for field_name, field_model in pydantic_model.__fields__.items():
-            inputs[field_name] = dspy.InputField(
-                desc=field_model.description or ""
-            )
+def get_dspy_model_name(langchain_model_name: str) -> str:
+    """
+    Convert LangChain model name to DSPy/LiteLLM format.
+    Adds provider prefix if not already present and sets required env vars.
+    """
+    # If model already has a provider prefix (contains /), return as-is
+    if '/' in langchain_model_name:
+        return langchain_model_name
 
-    outputs = {"output": dspy.OutputField()}
+    # Get provider from environment or config
+    provider = os.getenv("LLM_PROVIDER", "openai")
 
-    # Create a new signature class dynamically
-    return type(
-        f"{pydantic_model.__name__}Signature",
-        (dspy.Signature,),
-        {
-            "__doc__": docstring,
-            **inputs,
-            **outputs
-        }
-    )
+    # Set up Databricks environment variables for LiteLLM
+    if provider == "databricks":
+        databricks_url = os.getenv("DATABRICKS_BASE_URL")
+        databricks_token = os.getenv("DATABRICKS_TOKEN")
 
-class LangChainTool(dspy.Tool):
-    """A wrapper for LangChain tools to make them compatible with dspy."""
-    def __init__(self, tool):
-        self._tool = tool
-        super().__init__(
-            name=self._tool.name,
-            description=self._tool.description,
-            input_schema=pydantic_to_dspy_signature(self._tool.args_schema, self._tool.description),
-        )
+        # Remove trailing slash to avoid double slash in URL
+        if databricks_url:
+            databricks_url = databricks_url.rstrip('/')
+            # Add /serving-endpoints path if not already present
+            if not databricks_url.endswith('/serving-endpoints'):
+                databricks_url = f"{databricks_url}/serving-endpoints"
+            os.environ["DATABRICKS_API_BASE"] = databricks_url
 
-    def __call__(self, **kwargs):
-        return self._tool.run(kwargs)
+        if databricks_token:
+            os.environ["DATABRICKS_API_KEY"] = databricks_token
+
+        model_name = f"databricks/{langchain_model_name}"
+        print(f"DEBUG: Converting model '{langchain_model_name}' to '{model_name}'")
+        print(f"DEBUG: DATABRICKS_API_BASE={os.environ.get('DATABRICKS_API_BASE')}")
+        return model_name
+    elif provider == "anthropic":
+        return f"anthropic/{langchain_model_name}"
+    elif provider == "openai":
+        # OpenAI models don't need prefix in most cases
+        return langchain_model_name
+    else:
+        # Default: add provider prefix
+        return f"{provider}/{langchain_model_name}"
+
+def langchain_to_dspy_tool(langchain_tool):
+    """Converts a LangChain tool to a DSPy Tool."""
+    try:
+        # Try to use the built-in converter if available
+        return Tool.from_langchain(langchain_tool)
+    except AttributeError:
+        # Fallback: create a simple wrapper function
+        def tool_func(**kwargs):
+            return langchain_tool.run(kwargs)
+        tool_func.__name__ = langchain_tool.name
+        tool_func.__doc__ = langchain_tool.description
+        return tool_func
 
 class AnalystSignature(dspy.Signature):
     """
@@ -69,7 +90,7 @@ class AnalystModule(dspy.Module):
     """
     def __init__(self, tools):
         super().__init__()
-        dspy_tools = [LangChainTool(tool) for tool in tools]
+        dspy_tools = [langchain_to_dspy_tool(tool) for tool in tools]
         self.agent = dspy.ReAct(AnalystSignature, tools=dspy_tools)
 
     def forward(self, system_message, tool_names, current_date, ticker, messages):

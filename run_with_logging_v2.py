@@ -68,9 +68,10 @@ try:
     trade_date = datetime.today().strftime('%Y-%m-%d')
     
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = "databricks"
-    config["deep_think_llm"] = "databricks-claude-sonnet-4-5"
-    config["quick_think_llm"] = "llama_v3_3_70b_instruct_pro"
+    # Use environment variables if available, otherwise use config defaults
+    config["llm_provider"] = os.getenv("LLM_PROVIDER", config.get("llm_provider", "openai"))
+    config["deep_think_llm"] = os.getenv("DEEP_THINK_LLM", config.get("deep_think_llm", "o4-mini"))
+    config["quick_think_llm"] = os.getenv("QUICK_THINK_LLM", config.get("quick_think_llm", "gpt-4o-mini"))
     if config.get("databricks_base_url") and not config["databricks_base_url"].endswith("/serving-endpoints"):
         config["databricks_base_url"] = config["databricks_base_url"].rstrip("/") + "/serving-endpoints"
     

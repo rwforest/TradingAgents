@@ -1,25 +1,26 @@
-from langchain_core.messages import AIMessage
-from tradingagents.agents.utils.agent_utils import get_stock_data, get_indicators, get_company_info, ensure_message_alternation
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import AIMessage, ToolMessage
+import time
+import json
+from tradingagents.agents.utils.agent_utils import get_stock_data, get_indicators, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.summarizer import summarize_analyst_report
-from tradingagents.agents.analysts.dspy_prompt_optimizer import AnalystModule
-from dspy.predict.langchain import LangChain
-import dspy
+
 
 def create_market_analyst(llm):
+
     def market_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
+        company_name = state["company_of_interest"]
 
+        # Ensure messages properly alternate between user and assistant roles
+        # This prevents "Chat message input roles must alternate" errors
         messages = ensure_message_alternation(state["messages"])
-
-        # Convert messages to a string format for DSPy
-        message_string = "\n".join([f"{msg.role}: {msg.content}" for msg in messages])
 
         tools = [
             get_stock_data,
             get_indicators,
-            get_company_info,
         ]
 
         system_message = (
@@ -47,41 +48,56 @@ Volatility Indicators:
 Volume-Based Indicators:
 - vwma: VWMA: A moving average weighted by volume. Usage: Confirm trends by integrating price action with volume data. Tips: Watch for skewed results from volume spikes; use in combination with other volume analyses.
 
-- Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Please make sure to call get_stock_data first to retrieve the CSV that is needed to generate indicators. Then use get_indicators with the specific indicator names. Write a very detailed and nuanced report of the trends you observe. Do not simply state the trends are mixed, provide detailed and finegrained analysis and insights that may help traders make decisions.
-- Your final output must be a markdown report. Start the report with a 'Decision Summary' section that includes your final analysis decision (e.g., BUY, HOLD, SELL) and a brief justification.
-- Use the `get_company_info` tool to fact-check company details like the fiscal year and to prioritize your analysis around key dates like earnings announcements."""
+- Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Please make sure to call get_stock_data first to retrieve the CSV that is needed to generate indicators. Then use get_indicators with the specific indicator names. Write a very detailed and nuanced report of the trends you observe. Do not simply state the trends are mixed, provide detailed and finegrained analysis and insights that may help traders make decisions."""
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
         )
 
-        # Configure DSPy with the LLM
-        dspy.settings.configure(lm=LangChain(model=llm.model_name))
-
-        # Create and run the DSPy module
-        analyst_module = AnalystModule(tools=tools)
-        result = analyst_module(
-            system_message=system_message,
-            tool_names=", ".join([tool.name for tool in tools]),
-            current_date=current_date,
-            ticker=ticker,
-            messages=message_string
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a helpful AI assistant, collaborating with other assistants."
+                    " Use the provided tools to progress towards answering the question."
+                    " If you are unable to fully answer, that's OK; another assistant with different tools"
+                    " will help where you left off. Execute what you can to make progress."
+                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
+                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
+                    " You have access to the following tools: {tool_names}.\n{system_message}"
+                    "For your reference, the current date is {current_date}. The company we want to look at is {ticker}",
+                ),
+                MessagesPlaceholder(variable_name="messages"),
+            ]
         )
 
-        report = result.report
+        prompt = prompt.partial(system_message=system_message)
+        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+        prompt = prompt.partial(current_date=current_date)
+        prompt = prompt.partial(ticker=ticker)
 
-        # Summarize if report is too long (>5000 chars)
-        if len(report) > 5000:
-            print(f"[Market Analyst] Report is {len(report)} chars, summarizing...")
-            config = get_config()
-            summarized_report = summarize_analyst_report(
-                analyst_name="Market Analyst",
-                full_report=report,
-                max_summary_length=2000,
-                llm_config=config
-            )
-            report = summarized_report
+        chain = prompt | llm.bind_tools(tools)
+
+        result = chain.invoke(state["messages"])
+
+        report = ""
+
+        if len(result.tool_calls) == 0:
+            report = result.content
+
+            # Summarize if report is too long (>5000 chars)
+            if len(report) > 5000:
+                print(f"[Market Analyst] Report is {len(report)} chars, summarizing...")
+                config = get_config()
+                summarized_report = summarize_analyst_report(
+                    analyst_name="Market Analyst",
+                    full_report=report,
+                    max_summary_length=2000,
+                    llm_config=config
+                )
+                # Replace the result content with summarized version
+                result = AIMessage(content=summarized_report)
 
         return {
-            "messages": [AIMessage(content=report)],
+            "messages": [result],
             "market_report": report,
         }
 
