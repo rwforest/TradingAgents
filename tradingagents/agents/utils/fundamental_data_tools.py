@@ -75,3 +75,18 @@ def get_income_statement(
         str: A formatted report containing income statement data
     """
     return route_to_vendor("get_income_statement", ticker, freq, curr_date)
+
+
+@tool
+def get_company_info(
+    ticker: Annotated[str, "ticker symbol"],
+) -> str:
+    """
+    Retrieve key company information, such as fiscal year end and earnings dates.
+    Uses the yfinance data vendor.
+    Args:
+        ticker (str): Ticker symbol of the company
+    Returns:
+        str: A summary of key company information.
+    """
+    return route_to_vendor("get_company_info", ticker)

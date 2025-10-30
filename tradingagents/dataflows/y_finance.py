@@ -405,3 +405,40 @@ def get_insider_transactions(
         
     except Exception as e:
         return f"Error retrieving insider transactions for {ticker}: {str(e)}"
+
+
+def get_company_info(
+    ticker: Annotated[str, "ticker symbol of the company"]
+):
+    """Get key company information from yfinance, such as fiscal year end and earnings dates."""
+    try:
+        ticker_obj = yf.Ticker(ticker.upper())
+        info = ticker_obj.info
+        calendar = ticker_obj.calendar
+
+        # Safely get fiscal year end and format it
+        fiscal_year_end_ts = info.get('lastFiscalYearEnd')
+        if fiscal_year_end_ts:
+            fiscal_year_end = datetime.fromtimestamp(fiscal_year_end_ts).strftime('%Y-%m-%d')
+        else:
+            fiscal_year_end = 'N/A'
+
+        # Safely get earnings dates and format them
+        earnings_dates_str = 'N/A'
+        if calendar is not None and not calendar.empty and 'Earnings Date' in calendar.columns:
+            # Assuming 'Earnings Date' column exists and contains datetime objects
+            dates = calendar['Earnings Date'].dropna()
+            if not dates.empty:
+                earnings_dates_str = ", ".join([d.strftime('%Y-%m-%d') for d in dates])
+
+        # Build a summary string
+        summary = (
+            f"# Key Information for {ticker.upper()}\n"
+            f"- **Last Fiscal Year End:** {fiscal_year_end}\n"
+            f"- **Upcoming Earnings Dates:** {earnings_dates_str}\n"
+        )
+
+        return summary
+
+    except Exception as e:
+        return f"Error retrieving company info for {ticker}: {str(e)}"
