@@ -2,7 +2,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, ToolMessage
 import time
 import json
-from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions, ensure_message_alternation
+from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions, get_company_info, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.summarizer import summarize_analyst_report, safe_invoke_with_retry
 
@@ -18,6 +18,7 @@ def create_fundamentals_analyst(llm):
         messages = ensure_message_alternation(state["messages"])
 
         tools = [
+            get_company_info,
             get_fundamentals,
             get_balance_sheet,
             get_cashflow,
@@ -27,7 +28,7 @@ def create_fundamentals_analyst(llm):
         system_message = (
             "You are a researcher tasked with analyzing fundamental information over the past week about a company. Please write a comprehensive report of the company's fundamental information such as financial documents, company profile, basic company financials, and company financial history to gain a full view of the company's fundamental information to inform traders. Make sure to include as much detail as possible. Do not simply state the trends are mixed, provide detailed and finegrained analysis and insights that may help traders make decisions."
             + " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
-            + " Use the available tools: `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements.",
+            + " Use the available tools: `get_company_info` to get fiscal year end, earnings dates, current price, and 52-week high/low (ALWAYS call this first for context), `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements.",
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -54,9 +55,9 @@ def create_fundamentals_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        # Use safe invoke with automatic retry on context overflow
-        config = get_config()
-        result = safe_invoke_with_retry(chain, messages, max_retries=3, llm_config=config)
+        # Invoke chain - let LangGraph handle retries, not safe_invoke_with_retry
+        # which causes infinite loops
+        result = chain.invoke(messages)
 
         report = ""
 

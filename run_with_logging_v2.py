@@ -125,8 +125,31 @@ try:
         # Extract URLs from log file
         print("✓ Extracting sources...")
         import re
+        from urllib.parse import urlparse
         urls = set()
         log_handle.flush()
+
+        # Patterns to exclude (images, icons, schemas, etc.)
+        exclude_patterns = [
+            r'\.png$', r'\.jpg$', r'\.jpeg$', r'\.gif$', r'\.svg$', r'\.ico$',
+            r'\.webp$', r'\.bmp$',  # Image files
+            r'/images/', r'/cdn/', r'/assets/', r'/static/',  # Image/asset paths
+            r'schema\.png', r'logo\.',  # Common non-news URLs
+            r'width=', r'height=', r'fit=crop',  # Image parameters
+        ]
+
+        # News source domains to keep (even if they might have parameters)
+        news_domains = [
+            'yahoo.com', 'finance.yahoo.com',
+            'bloomberg.com', 'reuters.com',
+            'cnbc.com', 'marketwatch.com', 'wsj.com',
+            'fool.com', 'seekingalpha.com',
+            'benzinga.com', 'globenewswire.com',
+            'cointelegraph.com', 'decrypt.co',
+            'zacks.com', 'finhub.io',
+            'reddit.com',
+        ]
+
         with open(log_file, 'r') as lf:
             for line in lf:
                 # Extract all URLs (http/https)
@@ -134,9 +157,33 @@ try:
                 for url in found_urls:
                     # Clean up URL (remove trailing punctuation)
                     url = re.sub(r'[,;.)\]]+$', '', url)
+
                     # Skip very long URLs (likely data dumps)
-                    if len(url) < 200:
-                        urls.add(url)
+                    if len(url) > 200:
+                        continue
+
+                    # Check if URL matches exclude patterns
+                    if any(re.search(pattern, url, re.IGNORECASE) for pattern in exclude_patterns):
+                        continue
+
+                    # Parse domain
+                    try:
+                        parsed = urlparse(url)
+                        domain = parsed.netloc.lower()
+
+                        # Only keep if from known news domains
+                        if any(news_domain in domain for news_domain in news_domains):
+                            # For Benzinga, only keep article URLs, not image CDN
+                            if 'benzinga.com' in domain:
+                                if '/cdn.benzinga.com/' in url or 'cdn-cgi' in url:
+                                    continue  # Skip CDN/image URLs
+                                # Keep actual article URLs
+                                if any(path in url for path in ['/news/', '/markets/', '/insights/', '/opinion/', '/pressreleases/', '/trading-ideas/']):
+                                    urls.add(url)
+                            else:
+                                urls.add(url)
+                    except:
+                        continue  # Skip malformed URLs
 
         # Helper function to extract recommendation from report
         def extract_recommendation(report_text):
