@@ -1,21 +1,21 @@
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import AIMessage, ToolMessage
-import time
-import json
-from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions, ensure_message_alternation
+from langchain_core.messages import AIMessage
+from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
-from tradingagents.agents.utils.summarizer import summarize_analyst_report, safe_invoke_with_retry
-
+from tradingagents.agents.utils.summarizer import summarize_analyst_report
+from tradingagents.agents.analysts.dspy_prompt_optimizer import AnalystModule
+from tradingagents.agents.utils.safe_invoke import safe_invoke_with_retry
+from dspy.predict.langchain import LangChain
+import dspy
 
 def create_fundamentals_analyst(llm):
     def fundamentals_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
-        company_name = state["company_of_interest"]
 
-        # Ensure messages properly alternate between user and assistant roles
-        # This prevents "Chat message input roles must alternate" errors
         messages = ensure_message_alternation(state["messages"])
+
+        # Convert messages to a string format for DSPy
+        message_string = "\n".join([f"{msg.role}: {msg.content}" for msg in messages])
 
         tools = [
             get_fundamentals,
@@ -30,54 +30,41 @@ def create_fundamentals_analyst(llm):
             + " Use the available tools: `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements.",
         )
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " Use the provided tools to progress towards answering the question."
-                    " If you are unable to fully answer, that's OK; another assistant with different tools"
-                    " will help where you left off. Execute what you can to make progress."
-                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
-                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
-                    " You have access to the following tools: {tool_names}.\n{system_message}"
-                    "For your reference, the current date is {current_date}. The company we want to look at is {ticker}",
-                ),
-                MessagesPlaceholder(variable_name="messages"),
-            ]
-        )
+        # Configure DSPy with the LLM
+        dspy.settings.configure(lm=LangChain(model=llm.model_name))
 
-        prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
-        prompt = prompt.partial(current_date=current_date)
-        prompt = prompt.partial(ticker=ticker)
-
-        chain = prompt | llm.bind_tools(tools)
+        # Create the DSPy module
+        analyst_module = AnalystModule(tools=tools)
 
         # Use safe invoke with automatic retry on context overflow
         config = get_config()
-        result = safe_invoke_with_retry(chain, messages, max_retries=3, llm_config=config)
+        result = safe_invoke_with_retry(
+            analyst_module,
+            max_retries=3,
+            llm_config=config,
+            system_message=system_message,
+            tool_names=", ".join([tool.name for tool in tools]),
+            current_date=current_date,
+            ticker=ticker,
+            messages=message_string
+        )
 
-        report = ""
+        report = result.report
 
-        if len(result.tool_calls) == 0:
-            report = result.content
-
-            # Summarize if report is too long (>5000 chars)
-            if len(report) > 5000:
-                print(f"[Fundamentals Analyst] Report is {len(report)} chars, summarizing...")
-                config = get_config()
-                summarized_report = summarize_analyst_report(
-                    analyst_name="Fundamentals Analyst",
-                    full_report=report,
-                    max_summary_length=2000,
-                    llm_config=config
-                )
-                # Replace the result content with summarized version
-                result = AIMessage(content=summarized_report)
+        # Summarize if report is too long (>5000 chars)
+        if len(report) > 5000:
+            print(f"[Fundamentals Analyst] Report is {len(report)} chars, summarizing...")
+            config = get_config()
+            summarized_report = summarize_analyst_report(
+                analyst_name="Fundamentals Analyst",
+                full_report=report,
+                max_summary_length=2000,
+                llm_config=config
+            )
+            report = summarized_report
 
         return {
-            "messages": [result],
+            "messages": [AIMessage(content=report)],
             "fundamentals_report": report,
         }
 

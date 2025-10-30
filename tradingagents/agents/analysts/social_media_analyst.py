@@ -1,20 +1,19 @@
-from langchain_core.messages import ToolMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-import time
-import json
+from langchain_core.messages import AIMessage
 from tradingagents.agents.utils.agent_utils import get_news, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
-
+from tradingagents.agents.analysts.dspy_prompt_optimizer import AnalystModule
+from dspy.predict.langchain import LangChain
+import dspy
 
 def create_social_media_analyst(llm):
     def social_media_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
-        company_name = state["company_of_interest"]
 
-        # Ensure messages properly alternate between user and assistant roles
-        # This prevents "Chat message input roles must alternate" errors
         messages = ensure_message_alternation(state["messages"])
+
+        # Convert messages to a string format for DSPy
+        message_string = "\n".join([f"{msg.role}: {msg.content}" for msg in messages])
 
         tools = [
             get_news,
@@ -25,39 +24,23 @@ def create_social_media_analyst(llm):
             + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read.""",
         )
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " Use the provided tools to progress towards answering the question."
-                    " If you are unable to fully answer, that's OK; another assistant with different tools"
-                    " will help where you left off. Execute what you can to make progress."
-                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
-                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
-                    " You have access to the following tools: {tool_names}.\n{system_message}"
-                    "For your reference, the current date is {current_date}. The current company we want to analyze is {ticker}",
-                ),
-                MessagesPlaceholder(variable_name="messages"),
-            ]
+        # Configure DSPy with the LLM
+        dspy.settings.configure(lm=LangChain(model=llm.model_name))
+
+        # Create and run the DSPy module
+        analyst_module = AnalystModule(tools=tools)
+        result = analyst_module(
+            system_message=system_message,
+            tool_names=", ".join([tool.name for tool in tools]),
+            current_date=current_date,
+            ticker=ticker,
+            messages=message_string
         )
 
-        prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
-        prompt = prompt.partial(current_date=current_date)
-        prompt = prompt.partial(ticker=ticker)
-
-        chain = prompt | llm.bind_tools(tools)
-
-        result = chain.invoke(state["messages"])
-
-        report = ""
-
-        if len(result.tool_calls) == 0:
-            report = result.content
+        report = result.report
 
         return {
-            "messages": [result],
+            "messages": [AIMessage(content=report)],
             "sentiment_report": report,
         }
 
