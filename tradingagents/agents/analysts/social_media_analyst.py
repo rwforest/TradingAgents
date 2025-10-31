@@ -13,7 +13,6 @@ def create_social_media_analyst(llm):
         company_name = state["company_of_interest"]
 
         # Ensure messages properly alternate between user and assistant roles
-        # This prevents "Chat message input roles must alternate" errors
         messages = ensure_message_alternation(state["messages"])
 
         tools = [
@@ -49,7 +48,7 @@ def create_social_media_analyst(llm):
 
         chain = prompt | llm.bind_tools(tools)
 
-        result = chain.invoke(state["messages"])
+        result = chain.invoke(messages)
 
         report = ""
 

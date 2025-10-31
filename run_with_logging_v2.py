@@ -171,16 +171,20 @@ try:
                         parsed = urlparse(url)
                         domain = parsed.netloc.lower()
 
+                        # Skip CDN domains (must check before news_domains check)
+                        if 'cdn.benzinga.com' in domain or 'cdn-cgi' in url or 'cdn.foolcdn.com' in domain or 'staticx-tuner.zacks.com' in domain:
+                            continue
+
                         # Only keep if from known news domains
                         if any(news_domain in domain for news_domain in news_domains):
-                            # For Benzinga, only keep article URLs, not image CDN
+                            # For Benzinga, only keep actual article URLs
                             if 'benzinga.com' in domain:
-                                if '/cdn.benzinga.com/' in url or 'cdn-cgi' in url:
-                                    continue  # Skip CDN/image URLs
-                                # Keep actual article URLs
-                                if any(path in url for path in ['/news/', '/markets/', '/insights/', '/opinion/', '/pressreleases/', '/trading-ideas/']):
+                                # Must have article path
+                                if any(path in url for path in ['/news/', '/markets/', '/insights/', '/opinion/', '/pressreleases/', '/trading-ideas/', '/earnings/']):
                                     urls.add(url)
+                                # Skip everything else from benzinga (schema images, etc.)
                             else:
+                                # Other news domains - keep the URL
                                 urls.add(url)
                     except:
                         continue  # Skip malformed URLs
