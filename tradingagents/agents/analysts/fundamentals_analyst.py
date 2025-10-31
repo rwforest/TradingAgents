@@ -4,7 +4,7 @@ import time
 import json
 from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions, get_company_info, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
-from tradingagents.agents.utils.summarizer import summarize_analyst_report, safe_invoke_with_retry
+from tradingagents.agents.utils.summarizer import summarize_analyst_report
 
 
 def create_fundamentals_analyst(llm):
@@ -13,91 +13,71 @@ def create_fundamentals_analyst(llm):
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
 
-        # Fetch ALL fundamental data upfront - fundamentals are facts, not iterative
-        print(f"[Fundamentals Analyst] Fetching all fundamental data for {ticker}...")
-
-        try:
-            company_info = get_company_info(ticker)
-        except Exception as e:
-            company_info = f"Error fetching company info: {e}"
-
-        try:
-            fundamentals = get_fundamentals(ticker)
-        except Exception as e:
-            fundamentals = f"Error fetching fundamentals: {e}"
-
-        try:
-            balance_sheet = get_balance_sheet(ticker)
-        except Exception as e:
-            balance_sheet = f"Error fetching balance sheet: {e}"
-
-        try:
-            income_statement = get_income_statement(ticker)
-        except Exception as e:
-            income_statement = f"Error fetching income statement: {e}"
-
-        try:
-            cashflow = get_cashflow(ticker)
-        except Exception as e:
-            cashflow = f"Error fetching cashflow: {e}"
-
-        # Create comprehensive data package
-        fundamental_data = f"""# Fundamental Data for {ticker}
-
-## Company Information and Fact-Checking Data
-{company_info}
-
-## Comprehensive Fundamentals
-{fundamentals}
-
-## Balance Sheet
-{balance_sheet}
-
-## Income Statement
-{income_statement}
-
-## Cash Flow Statement
-{cashflow}
-"""
-
-        # Now ask LLM to analyze this data WITHOUT tools - use simple message construction
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        system_message = (
-            f"You are a financial analyst tasked with analyzing fundamental information about a company. "
-            f"All the fundamental data has been provided below. Your job is to write a comprehensive report analyzing this data. "
-            f"Focus on: financial health, growth trends, profitability, valuation metrics, and key risks/opportunities. "
-            f"Make sure to include as much detail as possible. Do not simply state the trends are mixed, provide detailed and finegrained analysis and insights that may help traders make decisions. "
-            f"Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read.\n\n"
-            f"For your reference, the current date is {current_date}. The company we want to look at is {ticker}"
-        )
-
-        user_message_content = f"Here is all the fundamental data for {ticker}:\n\n{fundamental_data}\n\nPlease provide a comprehensive analysis."
-
         # Ensure messages properly alternate between user and assistant roles
         messages = ensure_message_alternation(state["messages"])
 
-        # Build the final message list
-        final_messages = [SystemMessage(content=system_message)] + messages + [HumanMessage(content=user_message_content)]
+        tools = [
+            get_company_info,
+            get_fundamentals,
+            get_balance_sheet,
+            get_cashflow,
+            get_income_statement,
+        ]
 
-        # Invoke LLM without tools - just analysis
-        result = llm.invoke(final_messages)
+        system_message = (
+            "You are a researcher tasked with analyzing fundamental information over the past week about a company. "
+            "Please write a comprehensive report of the company's fundamental information such as financial documents, company profile, basic company financials, and company financial history to gain a full view of the company's fundamental information to inform traders. "
+            "Make sure to include as much detail as possible. Do not simply state the trends are mixed, provide detailed and finegrained analysis and insights that may help traders make decisions. "
+            "Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read. "
+            "Use the available tools: `get_company_info` to get fiscal year end, earnings dates, current price, and 52-week high/low (call this first for context), `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements. "
+            "You can call multiple different tools as needed, but avoid calling the same tool repeatedly with identical parameters."
+        )
 
-        report = result.content
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "You are a helpful AI assistant, collaborating with other assistants."
+                    " Use the provided tools to progress towards answering the question."
+                    " If you are unable to fully answer, that's OK; another assistant with different tools"
+                    " will help where you left off. Execute what you can to make progress."
+                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
+                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
+                    " You have access to the following tools: {tool_names}.\n{system_message}"
+                    " For your reference, the current date is {current_date}. The company we want to look at is {ticker}",
+                ),
+                MessagesPlaceholder(variable_name="messages"),
+            ]
+        )
 
-        # Summarize if report is too long (>5000 chars)
-        if len(report) > 5000:
-            print(f"[Fundamentals Analyst] Report is {len(report)} chars, summarizing...")
-            config = get_config()
-            summarized_report = summarize_analyst_report(
-                analyst_name="Fundamentals Analyst",
-                full_report=report,
-                max_summary_length=2000,
-                llm_config=config
-            )
-            result = AIMessage(content=summarized_report)
-        else:
-            result = AIMessage(content=report)
+        prompt = prompt.partial(system_message=system_message)
+        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+        prompt = prompt.partial(current_date=current_date)
+        prompt = prompt.partial(ticker=ticker)
+
+        chain = prompt | llm.bind_tools(tools)
+
+        # Invoke chain directly - LangGraph handles the tool calling loop
+        # No need for safe_invoke_with_retry which caused infinite loops
+        result = chain.invoke(messages)
+
+        report = ""
+
+        if len(result.tool_calls) == 0:
+            report = result.content
+
+            # Summarize if report is too long (>5000 chars)
+            if len(report) > 5000:
+                print(f"[Fundamentals Analyst] Report is {len(report)} chars, summarizing...")
+                config = get_config()
+                summarized_report = summarize_analyst_report(
+                    analyst_name="Fundamentals Analyst",
+                    full_report=report,
+                    max_summary_length=2000,
+                    llm_config=config
+                )
+                # Replace the result content with summarized version
+                result = AIMessage(content=summarized_report)
 
         return {
             "messages": [result],
