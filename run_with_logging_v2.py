@@ -15,6 +15,7 @@ import yfinance as yf
 load_dotenv()
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.reporting import generate_html_report
 
 # Setup logging
 logs_dir = Path("logs")
@@ -287,7 +288,26 @@ try:
                     f.write(f"- {url}\n")
                 f.write(f"\n*Analysis generated on {datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}*\n")
         print(f"✓ Markdown: {md_file.name}")
-        
+
+        # HTML
+        html_file = out_dir / f"{symbol}_{ts}.html"
+        try:
+            print("✓ Writing HTML...")
+            html_content = generate_html_report(
+                symbol=symbol,
+                trade_date=trade_date,
+                final_state=final_state,
+                decision=decision,
+                chart_file=chart_file if chart_ok else None,
+                urls=list(urls) if urls else None,
+                provider=config['llm_provider']
+            )
+            with open(html_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            print(f"✓ HTML: {html_file.name}")
+        except Exception as e:
+            print(f"⚠ HTML generation failed: {e}")
+
         # PDF
         try:
             print("✓ Converting PDF...")
