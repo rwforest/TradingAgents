@@ -1,44 +1,70 @@
+from typing import List, Dict
+ 
 from langchain_core.messages import ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-import time
-import json
 from tradingagents.agents.utils.agent_utils import get_social_media_mentions
-from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.context_limiter import trim_messages_for_model
-
+ 
+def _extract_social_tool_outputs(messages: List) -> List[str]:
+    """Return only tool outputs produced by get_social_media_mentions."""
+    tool_name_by_id: Dict[str, str] = {}
+    outputs: List[str] = []
+ 
+    for msg in messages:
+        tool_calls = getattr(msg, "tool_calls", None)
+        if tool_calls:
+            for tc in tool_calls:
+                if isinstance(tc, dict):
+                    call_id = tc.get("id")
+                    name = tc.get("name")
+                else:
+                    call_id = getattr(tc, "id", None)
+                    name = getattr(tc, "name", None)
+                if call_id:
+                    tool_name_by_id[call_id] = name
+ 
+        if isinstance(msg, ToolMessage):
+            call_id = getattr(msg, "tool_call_id", None)
+            if call_id and tool_name_by_id.get(call_id) == "get_social_media_mentions":
+                content = getattr(msg, "content", "")
+                if content:
+                    outputs.append(content)
+ 
+    return outputs
+ 
 def create_social_media_analyst(llm):
     def social_media_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
         messages = state["messages"]
-
+ 
         # Trim messages to prevent context overflow
         messages = trim_messages_for_model(
             messages,
             model_name="claude-sonnet",
             summarize=True
         )
-
+ 
+        # Capture tool outputs so the analyst can reference them when writing the report
+        tool_outputs = _extract_social_tool_outputs(messages)
+ 
         tool_call_count = state.get("social_media_analyst_tool_call_count", 0)
         called_tools = state.get("social_media_analyst_called_tools", set())
-
-        # Update state from the last message
-        last_message = messages[-1]
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            tool_call_count += len(last_message.tool_calls)
-            for tc in last_message.tool_calls:
-                called_tools.add(tc.get("name"))
-
+        if not isinstance(called_tools, set):
+            called_tools = set(called_tools)
+ 
         tools = [
             get_social_media_mentions,
         ]
-
+ 
         # After 1 tool call, force report generation
         if tool_call_count >= 1:
+            context_block = "\n\n".join(tool_outputs[-3:]) if tool_outputs else "No tool results available. Summarize any insights you can."  # noqa: E501
             system_prompt = (
                 "You are a social media analyst. You have already gathered data. "
                 "Write a comprehensive report NOW using the data from previous tool results. "
-                "Do NOT call any more tools. Write the report directly."
+                "Do NOT call any more tools. Write the report directly.\n\n"
+                f"Use these tool results as your primary evidence:\n{context_block}"
             )
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
@@ -54,7 +80,7 @@ def create_social_media_analyst(llm):
                 "Do not simply state the trends are mixed; provide detailed and fine-grained analysis and insights that may help traders make decisions."
                 + ''' Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read.'''
             )
-
+ 
             prompt = ChatPromptTemplate.from_messages(
                 [
                     (
@@ -69,25 +95,37 @@ def create_social_media_analyst(llm):
                     MessagesPlaceholder(variable_name="messages"),
                 ]
             )
-
+ 
             prompt = prompt.partial(system_message=system_message)
             prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
             prompt = prompt.partial(current_date=current_date)
             prompt = prompt.partial(ticker=ticker)
-
+ 
             chain = prompt | llm.bind_tools(tools)
             result = chain.invoke(messages)
-
+ 
+        previous_report = state.get("sentiment_report", "")
         report = ""
-
+ 
+        if hasattr(result, "tool_calls") and result.tool_calls:
+            tool_call_count += len(result.tool_calls)
+            for tc in result.tool_calls:
+                tool_name = None
+                if isinstance(tc, dict):
+                    tool_name = tc.get("name")
+                else:
+                    tool_name = getattr(tc, "name", None)
+                if tool_name:
+                    called_tools.add(tool_name)
+ 
         if len(result.tool_calls) == 0:
-            report = result.content
-
+            report = result.content or previous_report
+ 
         return {
             "messages": [result],
             "sentiment_report": report,
             "social_media_analyst_tool_call_count": tool_call_count,
             "social_media_analyst_called_tools": called_tools,
         }
-
+ 
     return social_media_analyst_node
