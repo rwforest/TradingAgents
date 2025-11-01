@@ -51,7 +51,6 @@ TOOLS_CATEGORIES = {
             "get_global_news",
             "get_insider_sentiment",
             "get_insider_transactions",
-            "get_social_media_mentions",
         ]
     }
 }

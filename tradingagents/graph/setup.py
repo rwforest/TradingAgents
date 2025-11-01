@@ -150,9 +150,10 @@ class GraphSetup:
                     self.conditional_logic.should_continue_market,
                     {
                         "tools_market": current_tools,
-                        "CONTINUE": next_node,  # Go to next node, bypassing clear
+                        "CONTINUE": current_clear,  # Go to clear node
                     },
                 )
+                workflow.add_edge(current_clear, next_node)
             else:
                 # Standard handling for other analysts
                 workflow.add_conditional_edges(

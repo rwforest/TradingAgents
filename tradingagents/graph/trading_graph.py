@@ -42,7 +42,7 @@ from tradingagents.agents.utils.agent_utils import (
     get_insider_sentiment,
     get_insider_transactions,
     get_global_news,
-    get_company_info
+    get_company_info,    
 )
 
 from .conditional_logic import ConditionalLogic
