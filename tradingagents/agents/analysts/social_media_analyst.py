@@ -61,17 +61,17 @@ def create_social_media_analyst(llm):
         if tool_call_count >= 1:
             context_block = "\n\n".join(tool_outputs[-3:]) if tool_outputs else "No tool results available. Summarize any insights you can."  # noqa: E501
             system_prompt = (
-                "You are a social media analyst. You have already gathered data. "
+                "You are a social media analyst. You have already gathered data for {ticker} as of {current_date}. "
                 "Write a comprehensive report NOW using the data from previous tool results. "
                 "Do NOT call any more tools. Write the report directly.\n\n"
                 f"Use these tool results as your primary evidence:\n{context_block}"
             )
             prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
-                MessagesPlaceholder(variable_name="messages"),
-                ("human", "Write your final analysis report now.")
+                ("human", "Write your final analysis report now."),
             ])
-            result = (prompt | llm).invoke({"messages": messages})
+            prompt = prompt.partial(current_date=current_date, ticker=ticker)
+            result = (prompt | llm).invoke({})
         else:
             system_message = (
                 "You are a social media analyst tasked with analyzing social media posts and public sentiment for a specific company over the past week. "
