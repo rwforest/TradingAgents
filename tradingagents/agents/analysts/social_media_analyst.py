@@ -85,7 +85,7 @@ def create_social_media_analyst(llm):
                 [
                     (
                         "system",
-                        "You are a helpful AI assistant, collaborating with other assistants."
+                        f"You are a helpful AI assistant, collaborating with other assistants."
                         " Use the provided tools to progress towards answering the question."
                         " If you are unable to fully answer, that's OK; another assistant with different tools"
                         " will help where you left off. Execute what you can to make progress."
