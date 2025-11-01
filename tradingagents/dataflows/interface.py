@@ -51,6 +51,7 @@ TOOLS_CATEGORIES = {
             "get_global_news",
             "get_insider_sentiment",
             "get_insider_transactions",
+            "get_social_media_mentions",
         ]
     }
 }
@@ -105,6 +106,9 @@ VENDOR_METHODS = {
         "openai": get_stock_news_openai,
         "google": get_google_news,
         "local": [get_finnhub_news, get_reddit_company_news, get_google_news],
+    },
+    "get_social_media_mentions": {
+        "local": get_reddit_company_news,
     },
     "get_global_news": {
         "openai": get_global_news_openai,

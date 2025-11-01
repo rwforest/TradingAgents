@@ -100,7 +100,6 @@ try:
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         md_file = out_dir / f"{symbol}_{ts}.md"
-        pdf_file = out_dir / f"{symbol}_{ts}.pdf"
         chart_file = out_dir / f"{symbol}_{ts}_chart.png"
         
         # Chart
@@ -308,16 +307,6 @@ try:
         except Exception as e:
             print(f"⚠ HTML generation failed: {e}")
 
-        # PDF
-        try:
-            print("✓ Converting PDF...")
-            from md2pdf.core import md2pdf
-            md2pdf(str(pdf_file), md_file_path=str(md_file))
-            print(f"✓ PDF: {pdf_file.name}")
-        except ImportError:
-            print("⚠ PDF skipped (pip install md2pdf)")
-        except Exception as e:
-            print(f"⚠ PDF failed: {e}")
 
 except Exception as e:
     print(f"\nERROR: {e}")

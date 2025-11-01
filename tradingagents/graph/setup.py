@@ -137,20 +137,36 @@ class GraphSetup:
             current_tools = f"tools_{analyst_type}"
             current_clear = f"Msg Clear {analyst_type.capitalize()}"
 
-            # Add conditional edges for current analyst
-            workflow.add_conditional_edges(
-                current_analyst,
-                getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                [current_tools, current_clear],
-            )
-            workflow.add_edge(current_tools, current_analyst)
-
-            # Connect to next analyst or to Bull Researcher if this is the last analyst
+            # Determine the next node in the sequence for continuation
             if i < len(selected_analysts) - 1:
-                next_analyst = f"{selected_analysts[i+1].capitalize()} Analyst"
-                workflow.add_edge(current_clear, next_analyst)
+                next_node = f"{selected_analysts[i+1].capitalize()} Analyst"
             else:
-                workflow.add_edge(current_clear, "Bull Researcher")
+                next_node = "Bull Researcher"
+
+            if analyst_type == "market":
+                # Special handling for the stateful market analyst
+                workflow.add_conditional_edges(
+                    current_analyst,
+                    self.conditional_logic.should_continue_market,
+                    {
+                        "tools_market": current_tools,
+                        "CONTINUE": next_node,  # Go to next node, bypassing clear
+                    },
+                )
+            else:
+                # Standard handling for other analysts
+                workflow.add_conditional_edges(
+                    current_analyst,
+                    getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
+                    {
+                        current_tools: current_tools,
+                        current_clear: current_clear,
+                    },
+                )
+                workflow.add_edge(current_clear, next_node)
+
+            # The tool node always routes back to the analyst
+            workflow.add_edge(current_tools, current_analyst)
 
         # Add remaining edges
         workflow.add_conditional_edges(

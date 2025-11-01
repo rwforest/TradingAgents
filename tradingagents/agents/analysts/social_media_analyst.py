@@ -2,56 +2,81 @@ from langchain_core.messages import ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
-from tradingagents.agents.utils.agent_utils import get_news, ensure_message_alternation
+from tradingagents.agents.utils.agent_utils import get_social_media_mentions
 from tradingagents.dataflows.config import get_config
-
+from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
 def create_social_media_analyst(llm):
     def social_media_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
-        company_name = state["company_of_interest"]
+        messages = state["messages"]
 
-        # Ensure messages properly alternate between user and assistant roles
-        messages = ensure_message_alternation(state["messages"])
+        # Trim messages to prevent context overflow
+        messages = trim_messages_for_model(
+            messages,
+            model_name="claude-sonnet",
+            summarize=True
+        )
+
+        tool_call_count = state.get("social_media_analyst_tool_call_count", 0)
+        called_tools = state.get("social_media_analyst_called_tools", set())
+
+        # Update state from the last message
+        last_message = messages[-1]
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            tool_call_count += len(last_message.tool_calls)
+            for tc in last_message.tool_calls:
+                called_tools.add(tc.get("name"))
 
         tools = [
-            get_news,
+            get_social_media_mentions,
         ]
 
-        system_message = (
-            "You are a social media and company specific news researcher/analyst tasked with analyzing social media posts, recent company news, and public sentiment for a specific company over the past week. You will be given a company's name your objective is to write a comprehensive long report detailing your analysis, insights, and implications for traders and investors on this company's current state after looking at social media and what people are saying about that company, analyzing sentiment data of what people feel each day about the company, and looking at recent company news. Use the get_news(query, start_date, end_date) tool to search for company-specific news and social media discussions. Try to look at all sources possible from social media to sentiment to news. Do not simply state the trends are mixed, provide detailed and finegrained analysis and insights that may help traders make decisions."
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
-            + """
-
-CRITICAL RULE: You MUST ONLY cite specific sentiment scores, metrics, news facts, and data points that are EXPLICITLY STATED in the data returned by the get_news tool. The get_news tool returns news articles with sentiment scores from Alpha Vantage's API - cite these scores accurately. DO NOT make up, estimate, round, or infer sentiment scores or other numerical values. If the API returns a sentiment score of 0.352, cite it as 0.352, not "approximately 0.35" or "around 0.3". When citing sentiment labels (Bearish, Neutral, Bullish, etc.), use exactly what the API provides.""",
-        )
-
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " Use the provided tools to progress towards answering the question."
-                    " If you are unable to fully answer, that's OK; another assistant with different tools"
-                    " will help where you left off. Execute what you can to make progress."
-                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
-                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
-                    " You have access to the following tools: {tool_names}.\n{system_message}"
-                    "For your reference, the current date is {current_date}. The current company we want to analyze is {ticker}",
-                ),
+        # After 1 tool call, force report generation
+        if tool_call_count >= 1:
+            system_prompt = (
+                "You are a social media analyst. You have already gathered data. "
+                "Write a comprehensive report NOW using the data from previous tool results. "
+                "Do NOT call any more tools. Write the report directly."
+            )
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
                 MessagesPlaceholder(variable_name="messages"),
-            ]
-        )
+                ("human", "Write your final analysis report now.")
+            ])
+            result = (prompt | llm).invoke({"messages": messages})
+        else:
+            system_message = (
+                "You are a social media analyst tasked with analyzing social media posts and public sentiment for a specific company over the past week. "
+                "Your objective is to write a comprehensive report detailing your analysis of public sentiment, key themes in social media discussions, and the implications for traders and investors. "
+                "Use the get_social_media_mentions(ticker, start_date, end_date) tool to search for social media discussions. "
+                "Do not simply state the trends are mixed; provide detailed and fine-grained analysis and insights that may help traders make decisions."
+                + ''' Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read.'''
+            )
 
-        prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
-        prompt = prompt.partial(current_date=current_date)
-        prompt = prompt.partial(ticker=ticker)
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "You are a helpful AI assistant, collaborating with other assistants."
+                        " Use the provided tools to progress towards answering the question."
+                        " If you are unable to fully answer, that's OK; another assistant with different tools"
+                        " will help where you left off. Execute what you can to make progress."
+                        " You have access to the following tools: {tool_names}.\n{system_message}"
+                        "For your reference, the current date is {current_date}. The current company we want to analyze is {ticker}",
+                    ),
+                    MessagesPlaceholder(variable_name="messages"),
+                ]
+            )
 
-        chain = prompt | llm.bind_tools(tools)
+            prompt = prompt.partial(system_message=system_message)
+            prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+            prompt = prompt.partial(current_date=current_date)
+            prompt = prompt.partial(ticker=ticker)
 
-        result = chain.invoke(messages)
+            chain = prompt | llm.bind_tools(tools)
+            result = chain.invoke(messages)
 
         report = ""
 
@@ -61,6 +86,8 @@ CRITICAL RULE: You MUST ONLY cite specific sentiment scores, metrics, news facts
         return {
             "messages": [result],
             "sentiment_report": report,
+            "social_media_analyst_tool_call_count": tool_call_count,
+            "social_media_analyst_called_tools": called_tools,
         }
 
     return social_media_analyst_node

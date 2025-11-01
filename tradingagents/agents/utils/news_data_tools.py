@@ -69,3 +69,21 @@ def get_insider_transactions(
         str: A report of insider transaction data
     """
     return route_to_vendor("get_insider_transactions", ticker, curr_date)
+
+@tool
+def get_social_media_mentions(
+    ticker: Annotated[str, "Ticker symbol"],
+    start_date: Annotated[str, "Start date in yyyy-mm-dd format"],
+    end_date: Annotated[str, "End date in yyyy-mm-dd format"],
+) -> str:
+    """
+    Retrieve social media mentions for a given ticker symbol.
+    Uses the configured news_data vendor.
+    Args:
+        ticker (str): Ticker symbol
+        start_date (str): Start date in yyyy-mm-dd format
+        end_date (str): End date in yyyy-mm-dd format
+    Returns:
+        str: A formatted string containing social media mentions
+    """
+    return route_to_vendor("get_social_media_mentions", ticker, start_date, end_date)
