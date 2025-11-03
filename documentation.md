@@ -380,33 +380,32 @@ The Risk Judge acts as the final decision-maker in the workflow. The Risk Judge 
 
 The trading agent uses a variety of external APIs to gather data for its analysis. The `route_to_vendor` function in `tradingagents/dataflows/interface.py` determines which API to use based on the configuration in `default_config.py`.
 
-### Alpha Vantage
+### API Call Details
 
-The Alpha Vantage API is used to fetch:
+#### Alpha Vantage
 
--   **Stock prices**: `TIME_SERIES_DAILY_ADJUSTED`
--   **Technical indicators**: Various indicator functions
--   **Fundamentals**: `OVERVIEW`, `BALANCE_SHEET`, `CASH_FLOW`, `INCOME_STATEMENT`
--   **News**: `NEWS_SENTIMENT`
--   **Insider transactions**: `INSIDER_TRADING`
+All Alpha Vantage API calls are made to the `https://www.alphavantage.co/query` endpoint with a `function` parameter that specifies the desired data. The following functions are used:
 
-All Alpha Vantage API calls are made to the `https://www.alphavantage.co/query` endpoint.
+-   **Stock Prices**: `TIME_SERIES_DAILY_ADJUSTED`
+-   **Technical Indicators**: `SMA`, `EMA`, `MACD`, `RSI`, `BBANDS`, `ATR`
+-   **Fundamental Data**: `OVERVIEW`, `BALANCE_SHEET`, `CASH_FLOW`, `INCOME_STATEMENT`
+-   **News & Sentiment**: `NEWS_SENTIMENT`
+-   **Insider Transactions**: `INSIDER_TRANSACTIONS`
 
-### yfinance
+#### yfinance Library
 
-The `yfinance` library is used to fetch data from Yahoo Finance. This includes:
+The `yfinance` library is used to fetch data from Yahoo Finance. The following functions and attributes are used on a `yf.Ticker` object:
 
--   **Stock prices**: `ticker.history()`
--   **Technical indicators**: Calculated using the `stockstats` library on `yfinance` data.
--   **Financial statements**: `ticker.balance_sheet`, `ticker.cashflow`, `ticker.income_stmt`
--   **Insider transactions**: `ticker.insider_transactions`
--   **Company information**: `ticker.info`
+-   **Stock Prices**: `history()`
+-   **Financial Statements**: `balance_sheet`, `quarterly_balance_sheet`, `cashflow`, `quarterly_cashflow`, `income_stmt`, `quarterly_income_stmt`
+-   **Insider Transactions**: `insider_transactions`
+-   **Company Information**: `info`, `calendar`
 
 ### Data Flow
 
 1.  **Tool Call**: An analyst agent calls a tool function (e.g., `get_indicators`).
 2.  **Routing**: The `route_to_vendor` function determines the appropriate data provider (e.g., `alpha_vantage`).
-3.  **API Call**: The corresponding function in the vendor-specific module (e.g., `tradingagents/dataflows/alpha_vantage.py`) makes the external API call.
+3.  **API Call**: The corresponding function in the vendor-specific module makes the external API call using one of the endpoints or library functions listed above.
 4.  **Response**: The API response is returned to the analyst agent.
 5.  **State Update**: The analyst agent processes the data and updates the `AgentState` with its report.
 6.  **Next Agent**: The updated `AgentState` is passed to the next agent in the workflow, allowing for a cumulative build-up of information.
