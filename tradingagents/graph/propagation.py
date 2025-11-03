@@ -39,6 +39,20 @@ class Propagator:
             "fundamentals_report": "",
             "sentiment_report": "",
             "news_report": "",
+
+            # Analyst states
+            "market_analyst_tool_call_count": 0,
+            "market_analyst_called_indicators": set(),
+            "fundamentals_analyst_tool_call_count": 0,
+            "fundamentals_analyst_called_tools": set(),
+
+            # Social Media Analyst state
+            "social_media_analyst_tool_call_count": 0,
+            "social_media_analyst_called_tools": set(),
+
+            # News Analyst state
+            "news_analyst_tool_call_count": 0,
+            "news_analyst_called_tools": set(),
         }
 
     def get_graph_args(self) -> Dict[str, Any]:

@@ -1,8 +1,7 @@
-from langchain_core.messages import ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
-from tradingagents.agents.utils.agent_utils import get_news, ensure_message_alternation
+from tradingagents.agents.utils.agent_utils import get_news
 from tradingagents.dataflows.config import get_config
 
 
@@ -11,10 +10,6 @@ def create_social_media_analyst(llm):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
         company_name = state["company_of_interest"]
-
-        # Ensure messages properly alternate between user and assistant roles
-        # This prevents "Chat message input roles must alternate" errors
-        messages = ensure_message_alternation(state["messages"])
 
         tools = [
             get_news,

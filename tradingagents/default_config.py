@@ -3,7 +3,7 @@ import os
 DEFAULT_CONFIG = {
     "project_dir": os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
     "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR", "./results"),
-    "data_dir": "/Users/yluo/Documents/Code/ScAI/FR1-data",
+    "data_dir": "./data",
     "data_cache_dir": os.path.join(
         os.path.abspath(os.path.join(os.path.dirname(__file__), ".")),
         "dataflows/data_cache",
@@ -18,7 +18,8 @@ DEFAULT_CONFIG = {
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,
-    "max_recur_limit": 100,
+    "max_recur_limit": 1000,  # Reduced from 300 to prevent infinite loops
+    "max_tool_iterations": 10,  # Max tool calls per analyst
     # Data vendor configuration
     # Category-level configuration (default for all tools in category)
     "data_vendors": {

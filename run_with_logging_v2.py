@@ -15,6 +15,7 @@ import yfinance as yf
 load_dotenv()
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.reporting import generate_html_report
 
 # Setup logging
 logs_dir = Path("logs")
@@ -68,9 +69,10 @@ try:
     trade_date = datetime.today().strftime('%Y-%m-%d')
     
     config = DEFAULT_CONFIG.copy()
-    config["llm_provider"] = "databricks"
-    config["deep_think_llm"] = "databricks-claude-sonnet-4-5"
-    config["quick_think_llm"] = "llama_v3_3_70b_instruct_pro"
+    # Use environment variables if available, otherwise use config defaults
+    config["llm_provider"] = os.getenv("LLM_PROVIDER", config.get("llm_provider", "openai"))
+    config["deep_think_llm"] = os.getenv("DEEP_THINK_LLM", config.get("deep_think_llm", "o4-mini"))
+    config["quick_think_llm"] = os.getenv("QUICK_THINK_LLM", config.get("quick_think_llm", "gpt-4o-mini"))
     if config.get("databricks_base_url") and not config["databricks_base_url"].endswith("/serving-endpoints"):
         config["databricks_base_url"] = config["databricks_base_url"].rstrip("/") + "/serving-endpoints"
     
@@ -98,7 +100,6 @@ try:
         out_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         md_file = out_dir / f"{symbol}_{ts}.md"
-        pdf_file = out_dir / f"{symbol}_{ts}.pdf"
         chart_file = out_dir / f"{symbol}_{ts}_chart.png"
         
         # Chart
@@ -124,8 +125,31 @@ try:
         # Extract URLs from log file
         print("✓ Extracting sources...")
         import re
+        from urllib.parse import urlparse
         urls = set()
         log_handle.flush()
+
+        # Patterns to exclude (images, icons, schemas, etc.)
+        exclude_patterns = [
+            r'\.png$', r'\.jpg$', r'\.jpeg$', r'\.gif$', r'\.svg$', r'\.ico$',
+            r'\.webp$', r'\.bmp$',  # Image files
+            r'/images/', r'/cdn/', r'/assets/', r'/static/',  # Image/asset paths
+            r'schema\.png', r'logo\.',  # Common non-news URLs
+            r'width=', r'height=', r'fit=crop',  # Image parameters
+        ]
+
+        # News source domains to keep (even if they might have parameters)
+        news_domains = [
+            'yahoo.com', 'finance.yahoo.com',
+            'bloomberg.com', 'reuters.com',
+            'cnbc.com', 'marketwatch.com', 'wsj.com',
+            'fool.com', 'seekingalpha.com',
+            'benzinga.com', 'globenewswire.com',
+            'cointelegraph.com', 'decrypt.co',
+            'zacks.com', 'finhub.io',
+            'reddit.com',
+        ]
+
         with open(log_file, 'r') as lf:
             for line in lf:
                 # Extract all URLs (http/https)
@@ -133,9 +157,37 @@ try:
                 for url in found_urls:
                     # Clean up URL (remove trailing punctuation)
                     url = re.sub(r'[,;.)\]]+$', '', url)
+
                     # Skip very long URLs (likely data dumps)
-                    if len(url) < 200:
-                        urls.add(url)
+                    if len(url) > 200:
+                        continue
+
+                    # Check if URL matches exclude patterns
+                    if any(re.search(pattern, url, re.IGNORECASE) for pattern in exclude_patterns):
+                        continue
+
+                    # Parse domain
+                    try:
+                        parsed = urlparse(url)
+                        domain = parsed.netloc.lower()
+
+                        # Skip CDN domains (must check before news_domains check)
+                        if 'cdn.benzinga.com' in domain or 'cdn-cgi' in url or 'cdn.foolcdn.com' in domain or 'staticx-tuner.zacks.com' in domain:
+                            continue
+
+                        # Only keep if from known news domains
+                        if any(news_domain in domain for news_domain in news_domains):
+                            # For Benzinga, only keep actual article URLs
+                            if 'benzinga.com' in domain:
+                                # Must have article path
+                                if any(path in url for path in ['/news/', '/markets/', '/insights/', '/opinion/', '/pressreleases/', '/trading-ideas/', '/earnings/']):
+                                    urls.add(url)
+                                # Skip everything else from benzinga (schema images, etc.)
+                            else:
+                                # Other news domains - keep the URL
+                                urls.add(url)
+                    except:
+                        continue  # Skip malformed URLs
 
         # Helper function to extract recommendation from report
         def extract_recommendation(report_text):
@@ -235,17 +287,26 @@ try:
                     f.write(f"- {url}\n")
                 f.write(f"\n*Analysis generated on {datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}*\n")
         print(f"✓ Markdown: {md_file.name}")
-        
-        # PDF
+
+        # HTML
+        html_file = out_dir / f"{symbol}_{ts}.html"
         try:
-            print("✓ Converting PDF...")
-            from md2pdf.core import md2pdf
-            md2pdf(str(pdf_file), md_file_path=str(md_file))
-            print(f"✓ PDF: {pdf_file.name}")
-        except ImportError:
-            print("⚠ PDF skipped (pip install md2pdf)")
+            print("✓ Writing HTML...")
+            html_content = generate_html_report(
+                symbol=symbol,
+                trade_date=trade_date,
+                final_state=final_state,
+                decision=decision,
+                chart_file=chart_file if chart_ok else None,
+                urls=list(urls) if urls else None,
+                provider=config['llm_provider']
+            )
+            with open(html_file, 'w', encoding='utf-8') as f:
+                f.write(html_content)
+            print(f"✓ HTML: {html_file.name}")
         except Exception as e:
-            print(f"⚠ PDF failed: {e}")
+            print(f"⚠ HTML generation failed: {e}")
+
 
 except Exception as e:
     print(f"\nERROR: {e}")

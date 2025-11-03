@@ -8,7 +8,10 @@ from typing import Dict, Any, Tuple, List, Optional
 
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except ImportError:
+    ChatGoogleGenerativeAI = None
 
 from langgraph.prebuilt import ToolNode
 
@@ -23,6 +26,9 @@ from tradingagents.agents.utils.agent_states import (
 from tradingagents.agents.utils.rate_limiter import get_rate_limiter
 from tradingagents.agents.utils.rate_limited_llm import wrap_with_rate_limiting
 from tradingagents.dataflows.config import set_config
+from tradingagents.dataflows.y_finance import get_YFin_data_online
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 # Import the new abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
@@ -35,7 +41,8 @@ from tradingagents.agents.utils.agent_utils import (
     get_news,
     get_insider_sentiment,
     get_insider_transactions,
-    get_global_news
+    get_global_news,
+    get_company_info,    
 )
 
 from .conditional_logic import ConditionalLogic
@@ -148,7 +155,7 @@ class TradingAgentsGraph:
             self.conditional_logic,
         )
 
-        self.propagator = Propagator()
+        self.propagator = Propagator(max_recur_limit=self.config.get("max_recur_limit", 200))
         self.reflector = Reflector(self.quick_thinking_llm)
         self.signal_processor = SignalProcessor(self.quick_thinking_llm)
 
@@ -165,8 +172,6 @@ class TradingAgentsGraph:
         return {
             "market": ToolNode(
                 [
-                    # Core stock data tools
-                    get_stock_data,
                     # Technical indicators
                     get_indicators,
                 ]
@@ -184,6 +189,7 @@ class TradingAgentsGraph:
                     get_global_news,
                     get_insider_sentiment,
                     get_insider_transactions,
+                    get_company_info,
                 ]
             ),
             "fundamentals": ToolNode(
@@ -193,6 +199,7 @@ class TradingAgentsGraph:
                     get_balance_sheet,
                     get_cashflow,
                     get_income_statement,
+                    get_company_info,
                 ]
             ),
         }
@@ -206,6 +213,15 @@ class TradingAgentsGraph:
         init_agent_state = self.propagator.create_initial_state(
             company_name, trade_date
         )
+
+        # Fetch stock data
+        end_date = datetime.strptime(trade_date, "%Y-%m-%d")
+        start_date = end_date - relativedelta(months=6)
+        stock_data = get_YFin_data_online(
+            company_name, start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
+        )
+        init_agent_state["stock_data"] = stock_data
+
         args = self.propagator.get_graph_args()
 
         if self.debug:

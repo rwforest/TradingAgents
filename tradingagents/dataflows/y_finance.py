@@ -405,3 +405,164 @@ def get_insider_transactions(
         
     except Exception as e:
         return f"Error retrieving insider transactions for {ticker}: {str(e)}"
+
+
+def get_company_info(
+    ticker: Annotated[str, "ticker symbol of the company"]
+):
+    """Get key company information from yfinance, such as fiscal year end, earnings dates, and price metrics."""
+    try:
+        ticker_obj = yf.Ticker(ticker.upper())
+        info = ticker_obj.info
+        calendar = ticker_obj.calendar
+
+        # Safely get fiscal year end and format it
+        fiscal_year_end_ts = info.get('lastFiscalYearEnd')
+        if fiscal_year_end_ts:
+            fiscal_year_end = datetime.fromtimestamp(fiscal_year_end_ts).strftime('%Y-%m-%d')
+        else:
+            fiscal_year_end = 'N/A'
+
+        # Safely get earnings dates and format them
+        earnings_dates_str = 'N/A'
+        try:
+            if calendar is not None and hasattr(calendar, 'empty') and not calendar.empty and 'Earnings Date' in calendar.columns:
+                # Assuming 'Earnings Date' column exists and contains datetime objects
+                dates = calendar['Earnings Date'].dropna()
+                if not dates.empty:
+                    earnings_dates_str = ", ".join([d.strftime('%Y-%m-%d') for d in dates])
+        except (AttributeError, KeyError, TypeError):
+            pass  # Keep earnings_dates_str as 'N/A'
+
+        # Get current price and 52-week high/low for fact-checking
+        current_price = info.get('currentPrice', info.get('regularMarketPrice', 'N/A'))
+        fifty_two_week_high = info.get('fiftyTwoWeekHigh', 'N/A')
+        fifty_two_week_low = info.get('fiftyTwoWeekLow', 'N/A')
+
+        # Moving averages
+        fifty_day_avg = info.get('fiftyDayAverage', 'N/A')
+        two_hundred_day_avg = info.get('twoHundredDayAverage', 'N/A')
+
+        # Valuation metrics
+        trailing_pe = info.get('trailingPE', 'N/A')
+        forward_pe = info.get('forwardPE', 'N/A')
+        price_to_book = info.get('priceToBook', 'N/A')
+
+        # Analyst consensus
+        target_mean = info.get('targetMeanPrice', 'N/A')
+        target_high = info.get('targetHighPrice', 'N/A')
+        target_low = info.get('targetLowPrice', 'N/A')
+        recommendation_mean = info.get('recommendationMean', 'N/A')
+        num_analysts = info.get('numberOfAnalystOpinions', 'N/A')
+
+        # Performance metrics
+        fifty_two_week_change = info.get('52WeekChange', info.get('fiftyTwoWeekChangePercent', 'N/A'))
+        market_cap = info.get('marketCap', 'N/A')
+
+        # Profitability
+        profit_margins = info.get('profitMargins', 'N/A')
+        earnings_growth = info.get('earningsQuarterlyGrowth', 'N/A')
+
+        # Format numbers
+        def format_price(val):
+            return f"${val:.2f}" if isinstance(val, (int, float)) else val
+
+        def format_percent(val):
+            return f"{val*100:.2f}%" if isinstance(val, (int, float)) else val
+
+        def format_ratio(val):
+            return f"{val:.2f}" if isinstance(val, (int, float)) else val
+
+        def format_market_cap(val):
+            if isinstance(val, (int, float)):
+                if val >= 1e12:
+                    return f"${val/1e12:.2f}T"
+                elif val >= 1e9:
+                    return f"${val/1e9:.2f}B"
+                elif val >= 1e6:
+                    return f"${val/1e6:.2f}M"
+            return val
+
+        # Map recommendation mean to text
+        def format_recommendation(val):
+            if isinstance(val, (int, float)):
+                if val <= 1.5:
+                    return f"{val:.2f} (Strong Buy)"
+                elif val <= 2.5:
+                    return f"{val:.2f} (Buy)"
+                elif val <= 3.5:
+                    return f"{val:.2f} (Hold)"
+                elif val <= 4.5:
+                    return f"{val:.2f} (Sell)"
+                else:
+                    return f"{val:.2f} (Strong Sell)"
+            return val
+
+        current_price = format_price(current_price)
+        fifty_two_week_high = format_price(fifty_two_week_high)
+        fifty_two_week_low = format_price(fifty_two_week_low)
+        fifty_day_avg = format_price(fifty_day_avg)
+        two_hundred_day_avg = format_price(two_hundred_day_avg)
+        target_mean = format_price(target_mean)
+        target_high = format_price(target_high)
+        target_low = format_price(target_low)
+        trailing_pe = format_ratio(trailing_pe)
+        forward_pe = format_ratio(forward_pe)
+        price_to_book = format_ratio(price_to_book)
+        fifty_two_week_change = format_percent(fifty_two_week_change)
+        profit_margins = format_percent(profit_margins)
+        earnings_growth = format_percent(earnings_growth)
+        market_cap = format_market_cap(market_cap)
+        recommendation_mean = format_recommendation(recommendation_mean)
+
+        # Build a summary string
+        summary = (
+            f"# Key Information for {ticker.upper()}\n"
+            f"- **Last Fiscal Year End:** {fiscal_year_end}\n"
+            f"- **Upcoming Earnings Dates:** {earnings_dates_str}\n"
+            f"\n"
+            f"## Price Metrics (for fact-checking price targets)\n"
+            f"- **Current Price:** {current_price}\n"
+            f"- **52-Week High:** {fifty_two_week_high}\n"
+            f"- **52-Week Low:** {fifty_two_week_low}\n"
+            f"- **52-Week Change:** {fifty_two_week_change}\n"
+            f"- **50-Day Moving Average:** {fifty_day_avg}\n"
+            f"- **200-Day Moving Average:** {two_hundred_day_avg}\n"
+            f"\n"
+            f"## Valuation Metrics (for fact-checking valuation claims)\n"
+            f"- **Trailing P/E:** {trailing_pe}\n"
+            f"- **Forward P/E:** {forward_pe}\n"
+            f"- **Price-to-Book:** {price_to_book}\n"
+            f"- **Market Cap:** {market_cap}\n"
+            f"\n"
+            f"## Analyst Consensus (for fact-checking recommendations)\n"
+            f"- **Analyst Target Mean:** {target_mean}\n"
+            f"- **Analyst Target Range:** {target_low} - {target_high}\n"
+            f"- **Number of Analysts:** {num_analysts}\n"
+            f"- **Recommendation Mean:** {recommendation_mean}\n"
+            f"\n"
+            f"## Profitability (for fact-checking fundamental claims)\n"
+            f"- **Profit Margins:** {profit_margins}\n"
+            f"- **Quarterly Earnings Growth:** {earnings_growth}\n"
+            f"\n"
+            f"## FACT-CHECKING GUIDELINES\n"
+            f"**Price Targets:** Must be within reasonable range of current price and analyst targets. "
+            f"Suggesting entry points above 52-week high needs strong justification.\n"
+            f"\n"
+            f"**Valuation Claims:** If claiming \"undervalued\", P/E should be below sector average. "
+            f"If claiming \"overvalued\", P/E should be above average. Check price-to-book for asset-heavy companies.\n"
+            f"\n"
+            f"**Trend Analysis:** If price is below 200-day MA, don't claim \"strong uptrend\". "
+            f"If 52-week change is negative, don't claim \"momentum\" without context.\n"
+            f"\n"
+            f"**Recommendation Consistency:** If analyst consensus is 4.0+ (Sell), recommending BUY needs "
+            f"exceptional justification. If your target differs significantly from analyst mean, explain why.\n"
+            f"\n"
+            f"**Profitability Claims:** Don't claim \"strong fundamentals\" if profit margins are negative. "
+            f"Don't claim \"growth story\" if earnings growth is negative.\n"
+        )
+
+        return summary
+
+    except Exception as e:
+        return f"Error retrieving company info for {ticker}: {str(e)}"

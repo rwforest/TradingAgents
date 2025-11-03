@@ -15,9 +15,10 @@ class ConditionalLogic:
         """Determine if market analysis should continue."""
         messages = state["messages"]
         last_message = messages[-1]
+        # The market_analyst_node now handles iteration limiting internally
         if last_message.tool_calls:
             return "tools_market"
-        return "Msg Clear Market"
+        return "CONTINUE"
 
     def should_continue_social(self, state: AgentState):
         """Determine if social media analysis should continue."""

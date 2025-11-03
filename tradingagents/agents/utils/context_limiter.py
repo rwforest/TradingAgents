@@ -3,7 +3,9 @@ Context limiter to prevent token overflow in TradingAgents
 """
 from typing import List
 import tiktoken
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from tradingagents.dataflows.config import get_config
 
 def estimate_tokens(text: str, model: str = "gpt-4") -> int:
     """
@@ -57,13 +59,32 @@ def _summarize_messages(messages: List, model_name: str) -> str:
     if not messages:
         return ""
 
-    llm = get_llm(model_name)
-    
+    # Create summarization LLM
+    try:
+        config = get_config()
+        if config.get("llm_provider") == "databricks":
+            llm = ChatOpenAI(
+                model=config.get("quick_think_llm", "databricks-claude-sonnet-4-5"),
+                base_url=config.get("databricks_base_url"),
+                api_key=config.get("databricks_token"),
+                temperature=0.3
+            )
+        else:
+            # Fallback to OpenAI
+            llm = ChatOpenAI(
+                model="gpt-4o-mini",
+                temperature=0.3,
+                max_tokens=1000
+            )
+    except Exception as e:
+        print(f"Warning: Failed to create summarization LLM ({e}), skipping summarization")
+        return ""
+
     prompt = "Summarize the following conversation. Condense the key information, decisions, and data points into a concise paragraph. The summary will be used as context for a follow-up conversation, so it should be self-contained and easy to understand."
-    
+
     summary_prompt = f"{prompt}\n\n---\n\n" + "\n".join([str(m.content) if hasattr(m, 'content') else str(m) for m in messages])
 
-    response = llm.invoke(summary_prompt)
+    response = llm.invoke([HumanMessage(content=summary_prompt)])
     return response.content
 
 def trim_messages_to_token_limit(

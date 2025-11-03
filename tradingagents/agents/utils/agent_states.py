@@ -50,6 +50,7 @@ class RiskDebateState(TypedDict):
 class AgentState(MessagesState):
     company_of_interest: Annotated[str, "Company that we are interested in trading"]
     trade_date: Annotated[str, "What date we are trading at"]
+    stock_data: Annotated[str, "Stock data for the company of interest"]
 
     sender: Annotated[str, "Agent that sent this message"]
 
@@ -74,3 +75,19 @@ class AgentState(MessagesState):
         RiskDebateState, "Current state of the debate on evaluating risk"
     ]
     final_trade_decision: Annotated[str, "Final decision made by the Risk Analysts"]
+
+    # Market Analyst state
+    market_analyst_tool_call_count: Annotated[int, "Number of tool calls made by the market analyst"]
+    market_analyst_called_indicators: Annotated[set, "Set of indicators called by the market analyst"]
+
+    # Fundamentals Analyst state
+    fundamentals_analyst_tool_call_count: Annotated[int, "Number of tool calls made by the fundamentals analyst"]
+    fundamentals_analyst_called_tools: Annotated[set, "Set of tools called by the fundamentals analyst"]
+
+    # Social Media Analyst state
+    social_media_analyst_tool_call_count: Annotated[int, "Number of tool calls made by the social media analyst"]
+    social_media_analyst_called_tools: Annotated[set, "Set of tools called by the social media analyst"]
+
+    # News Analyst state
+    news_analyst_tool_call_count: Annotated[int, "Number of tool calls made by the news analyst"]
+    news_analyst_called_tools: Annotated[set, "Set of tools called by the news analyst"]

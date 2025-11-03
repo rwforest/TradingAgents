@@ -1,10 +1,11 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 import time
 import json
-from tradingagents.agents.utils.agent_utils import get_stock_data, get_indicators, ensure_message_alternation
+from tradingagents.agents.utils.agent_utils import get_indicators, ensure_message_alternation
 from tradingagents.dataflows.config import get_config
 from tradingagents.agents.utils.summarizer import summarize_analyst_report
+from tradingagents.agents.utils.context_limiter import trim_messages_for_model
 
 
 def create_market_analyst(llm):
@@ -12,80 +13,105 @@ def create_market_analyst(llm):
     def market_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
-        company_name = state["company_of_interest"]
+        stock_data = state["stock_data"]
+        messages = state["messages"]
 
-        # Ensure messages properly alternate between user and assistant roles
-        # This prevents "Chat message input roles must alternate" errors
-        messages = ensure_message_alternation(state["messages"])
-
-        tools = [
-            get_stock_data,
-            get_indicators,
-        ]
-
-        system_message = (
-            """You are a trading assistant tasked with analyzing financial markets. Your role is to select the **most relevant indicators** for a given market condition or trading strategy from the following list. The goal is to choose up to **8 indicators** that provide complementary insights without redundancy. Categories and each category's indicators are:
-
-Moving Averages:
-- close_50_sma: 50 SMA: A medium-term trend indicator. Usage: Identify trend direction and serve as dynamic support/resistance. Tips: It lags price; combine with faster indicators for timely signals.
-- close_200_sma: 200 SMA: A long-term trend benchmark. Usage: Confirm overall market trend and identify golden/death cross setups. Tips: It reacts slowly; best for strategic trend confirmation rather than frequent trading entries.
-- close_10_ema: 10 EMA: A responsive short-term average. Usage: Capture quick shifts in momentum and potential entry points. Tips: Prone to noise in choppy markets; use alongside longer averages for filtering false signals.
-
-MACD Related:
-- macd: MACD: Computes momentum via differences of EMAs. Usage: Look for crossovers and divergence as signals of trend changes. Tips: Confirm with other indicators in low-volatility or sideways markets.
-- macds: MACD Signal: An EMA smoothing of the MACD line. Usage: Use crossovers with the MACD line to trigger trades. Tips: Should be part of a broader strategy to avoid false positives.
-- macdh: MACD Histogram: Shows the gap between the MACD line and its signal. Usage: Visualize momentum strength and spot divergence early. Tips: Can be volatile; complement with additional filters in fast-moving markets.
-
-Momentum Indicators:
-- rsi: RSI: Measures momentum to flag overbought/oversold conditions. Usage: Apply 70/30 thresholds and watch for divergence to signal reversals. Tips: In strong trends, RSI may remain extreme; always cross-check with trend analysis.
-
-Volatility Indicators:
-- boll: Bollinger Middle: A 20 SMA serving as the basis for Bollinger Bands. Usage: Acts as a dynamic benchmark for price movement. Tips: Combine with the upper and lower bands to effectively spot breakouts or reversals.
-- boll_ub: Bollinger Upper Band: Typically 2 standard deviations above the middle line. Usage: Signals potential overbought conditions and breakout zones. Tips: Confirm signals with other tools; prices may ride the band in strong trends.
-- boll_lb: Bollinger Lower Band: Typically 2 standard deviations below the middle line. Usage: Indicates potential oversold conditions. Tips: Use additional analysis to avoid false reversal signals.
-- atr: ATR: Averages true range to measure volatility. Usage: Set stop-loss levels and adjust position sizes based on current market volatility. Tips: It's a reactive measure, so use it as part of a broader risk management strategy.
-
-Volume-Based Indicators:
-- vwma: VWMA: A moving average weighted by volume. Usage: Confirm trends by integrating price action with volume data. Tips: Watch for skewed results from volume spikes; use in combination with other volume analyses.
-
-- Select indicators that provide diverse and complementary information. Avoid redundancy (e.g., do not select both rsi and stochrsi). Also briefly explain why they are suitable for the given market context. When you tool call, please use the exact name of the indicators provided above as they are defined parameters, otherwise your call will fail. Please make sure to call get_stock_data first to retrieve the CSV that is needed to generate indicators. Then use get_indicators with the specific indicator names. Write a very detailed and nuanced report of the trends you observe. Do not simply state the trends are mixed, provide detailed and finegrained analysis and insights that may help traders make decisions."""
-            + """ Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."""
+        # Trim messages to prevent context overflow
+        messages = trim_messages_for_model(
+            messages,
+            model_name="claude-sonnet",
+            summarize=False
         )
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a helpful AI assistant, collaborating with other assistants."
-                    " Use the provided tools to progress towards answering the question."
-                    " If you are unable to fully answer, that's OK; another assistant with different tools"
-                    " will help where you left off. Execute what you can to make progress."
-                    " If you or any other assistant has the FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** or deliverable,"
-                    " prefix your response with FINAL TRANSACTION PROPOSAL: **BUY/HOLD/SELL** so the team knows to stop."
-                    " You have access to the following tools: {tool_names}.\n{system_message}"
-                    "For your reference, the current date is {current_date}. The company we want to look at is {ticker}",
-                ),
-                MessagesPlaceholder(variable_name="messages"),
-            ]
-        )
+        tool_call_count = state.get("market_analyst_tool_call_count", 0)
+        called_indicators = state.get("market_analyst_called_indicators", set())
 
-        prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
-        prompt = prompt.partial(current_date=current_date)
-        prompt = prompt.partial(ticker=ticker)
+        # Update state from the last message
+        last_message = messages[-1]
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            tool_call_count += len(last_message.tool_calls)
+            for tc in last_message.tool_calls:
+                if tc.get("name") == "get_indicators":
+                    args = tc.get("args", {})
+                    if "indicator" in args:
+                        called_indicators.add(args["indicator"])
 
-        chain = prompt | llm.bind_tools(tools)
+        tools = [get_indicators]
 
-        result = chain.invoke(state["messages"])
+        if tool_call_count >= 5 or len(called_indicators) >= 5:
+            system_prompt = (
+                "You are a market analyst. You have already collected stock data and technical indicators. "
+                "Write a comprehensive technical analysis report NOW using the data from previous tool results. "
+                "Include price trends, indicator analysis, and a final Market Outlook (Bullish/Bearish/Neutral). "
+                "Do NOT call any more tools. Write the report directly."
+            )
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    ("system", system_prompt),
+                    MessagesPlaceholder(variable_name="messages"),
+                    (
+                        "human",
+                        "Write your final technical analysis report now using the indicator data you collected. Do NOT call more tools.",
+                    ),
+                ]
+            )
+            # Invoke without tool binding to prevent more calls
+            result = (prompt | llm).invoke({"messages": messages})
+        else:
+            # Normal flow with tools
+            system_message = (
+                "You are a market analyst. You have been provided with the following stock price data:\n\n"
+                "{stock_data}\n\n"
+                "Your task is to gather additional technical indicators and then write a comprehensive technical analysis report.\n\n"
+                "You have already called the following indicators: {called_indicators}\n\n"
+                "Available tools:\n"
+                "- get_indicators: Get ONE indicator at a time (call separately for each: rsi, macd, close_50_sma, boll, atr)\n\n"
+                "Steps:\n"
+                "1. Analyze the provided stock price data.\n"
+                "2. Call get_indicators for a new indicator that you have not called before.\n"
+                "3. After gathering 3-5 indicators, write your technical analysis report.\n\n"
+                "RULES:\n"
+                "- Do NOT call the same indicator twice.\n"
+                "- After 3-5 indicator calls, write your report.\n"
+                "- Only cite exact values from tool responses."
+            )
 
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "You are a helpful AI assistant, collaborating with other assistants. "
+                        "Use the provided tools to progress towards answering the question. "
+                        "If you are unable to fully answer, that's OK; another assistant with different tools "
+                        "will help where you left off. Execute what you can to make progress. "
+                        "You have access to the following tools: {tool_names}.\n{system_message}\n"
+                        "For your reference, the current date is {current_date}. The company we want to look at is {ticker}",
+                    ),
+                    MessagesPlaceholder(variable_name="messages"),
+                ]
+            )
+
+            prompt = prompt.partial(
+                system_message=system_message.format(
+                    stock_data=stock_data, called_indicators=", ".join(called_indicators) if called_indicators else "None"
+                )
+            )
+
+            available_tools = [get_indicators]
+
+            prompt = prompt.partial(tool_names=", ".join([tool.name for tool in available_tools]))
+            prompt = prompt.partial(current_date=current_date)
+            prompt = prompt.partial(ticker=ticker)
+
+            chain = prompt | llm.bind_tools(available_tools)
+            result = chain.invoke(messages)
+
+        # Extract report
         report = ""
-
         if len(result.tool_calls) == 0:
             report = result.content
 
-            # Summarize if report is too long (>5000 chars)
             if len(report) > 5000:
-                print(f"[Market Analyst] Report is {len(report)} chars, summarizing...")
                 config = get_config()
                 summarized_report = summarize_analyst_report(
                     analyst_name="Market Analyst",
@@ -93,12 +119,14 @@ Volume-Based Indicators:
                     max_summary_length=2000,
                     llm_config=config
                 )
-                # Replace the result content with summarized version
                 result = AIMessage(content=summarized_report)
+                report = summarized_report
 
         return {
             "messages": [result],
             "market_report": report,
+            "market_analyst_tool_call_count": tool_call_count,
+            "market_analyst_called_indicators": called_indicators,
         }
 
     return market_analyst_node
